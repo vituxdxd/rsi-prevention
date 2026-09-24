@@ -1,0 +1,45 @@
+# --- Segredos / credenciais (NUNCA versionar) ---
+export/.env
+**/.env
+*.token
+
+# --- Python (pipeline de export) ---
+export/.venv/
+export/__pycache__/
+export/**/__pycache__/
+export/build/
+*.pyc
+
+# --- Modelos de trabalho (grandes; baixáveis do Hugging Face ou regeneráveis
+#     pelos scripts _quantize_qnn.py / _fix_output_split.py) ---
+/models/
+export/output/
+
+# --- Modelos embarcados no APK: o detector em produção (A16W8) É versionado
+#     porque é necessário para compilar o app; variantes/lixos grandes não. ---
+android/app/src/main/assets/models/*.onnx
+android/app/src/main/assets/models/*.data
+android/app/src/main/assets/models/*.bin
+android/app/src/main/assets/models/*.serialized
+!android/app/src/main/assets/models/detector_int8.onnx
+!android/app/src/main/assets/models/model.data
+
+# --- Android / Gradle ---
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/**/build/
+android/.idea/
+android/*.iml
+android/captures/
+android/.cxx/
+android/app/release/
+
+# --- Gradle wrapper distribution cache (não versionar jar baixado localmente) ---
+!android/gradle/wrapper/gradle-wrapper.jar
+!android/gradle/wrapper/gradle-wrapper.properties
+
+# --- OS ---
+Thumbs.db
+.DS_Store

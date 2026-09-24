@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Paleta "cirúrgica": azul-petróleo + acentos de alerta -->
+    <color name="teal_primary">#00695C</color>
+    <color name="teal_primary_dark">#004D40</color>
+    <color name="teal_light">#4DB6AC</color>
+
+    <color name="alert_red">#D32F2F</color>
+    <color name="warning_amber">#FFA000</color>
+    <color name="success_green">#2E7D32</color>
+
+    <color name="scrim_dark">#B3000000</color>
+    <color name="scrim_light">#66000000</color>
+
+    <color name="overlay_box_on_table">#4DB6AC</color>
+    <color name="overlay_box_removed">#FFA000</color>
+    <color name="overlay_box_not_returned">#D32F2F</color>
+    <color name="overlay_text">#FFFFFF</color>
+
+    <color name="white">#FFFFFFFF</color>
+    <color name="black">#FF000000</color>
+</resources>
