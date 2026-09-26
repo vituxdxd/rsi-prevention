@@ -2,6 +2,7 @@ package com.rsiprevention.app.camera
 
 import android.content.Context
 import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import android.util.Size
 import androidx.camera.core.CameraSelector
@@ -15,6 +16,7 @@ import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.rsiprevention.app.detection.YoloWorldDetector
+import com.rsiprevention.app.perf.PipelineStats
 import com.rsiprevention.app.stream.FrameStreamer
 import com.rsiprevention.app.stream.StreamOverlay
 import com.rsiprevention.app.tracking.InstrumentStatus
@@ -69,6 +71,12 @@ class CameraController(
     private val mainExecutor = ContextCompat.getMainExecutor(context)
     private var cameraProvider: ProcessCameraProvider? = null
 
+    /** Conversão de frame com bitmap interno reutilizado (não reciclar o retorno). */
+    private val frameConverter = FrameConverter()
+
+    /** Estatísticas por etapa do pipeline (log `DetectStats`). */
+    private val stats = PipelineStats()
+
     fun start() {
         val providerFuture = ProcessCameraProvider.getInstance(context)
         providerFuture.addListener(
@@ -109,33 +117,47 @@ class CameraController(
         try {
             val streaming = streamingEnabled
             if (monitoringEnabled || streaming) {
-                val bitmap = ImageUtils.imageProxyToUprightBitmap(imageProxy)
-                try {
-                    val instruments: List<TrackedInstrument> = if (monitoringEnabled) {
-                        val detections = detector.detect(bitmap)
-                        tracker.update(detections, bitmap)
-                        tracker.activeInstruments
-                    } else {
-                        // Sem monitoramento não há detecção fresca: o stream sai
-                        // sem caixas (evita mostrar posição antiga de instrumento).
-                        emptyList()
-                    }
+                val decodeStartNs = System.nanoTime()
+                val bitmap = frameConverter.toUpright(imageProxy)
+                val decodeNs = System.nanoTime() - decodeStartNs
 
-                    if (streaming) {
-                        streamer?.offer(bitmap, snapshotOverlays(instruments))
-                    }
+                val instruments: List<TrackedInstrument> = if (monitoringEnabled) {
+                    val detection = detector.detectFrame(bitmap)
 
-                    if (monitoringEnabled) {
-                        val width = bitmap.width
-                        val height = bitmap.height
-                        mainExecutor.execute { onFrameProcessed(instruments, width, height) }
-                    }
-                } finally {
-                    // O bitmap já foi consumido (detector copia os pixels para o
-                    // tensor; tracker extrai os templates de aparência; o streamer
-                    // faz a própria cópia) — recicla para não acumular memória
-                    // nativa frame a frame.
-                    bitmap.recycle()
+                    val trackerStartNs = System.nanoTime()
+                    tracker.update(detection.detections, detection.model)
+                    val trackerNs = System.nanoTime() - trackerStartNs
+
+                    stats.record(
+                        decodeNs = decodeNs,
+                        preprocessNs = detection.preprocessNs,
+                        inferenceNs = detection.inferenceNs,
+                        postprocessNs = detection.postprocessNs,
+                        trackerNs = trackerNs,
+                        detections = detection.detections.size,
+                        maxConfidence = detection.maxConfidence,
+                        nowMs = SystemClock.elapsedRealtime(),
+                        preprocessScaleNs = detection.preprocessScaleNs,
+                        preprocessPixelsNs = detection.preprocessPixelsNs,
+                        preprocessFillNs = detection.preprocessFillNs
+                    )
+                    logStatsIfDue()
+
+                    tracker.activeInstruments
+                } else {
+                    // Sem monitoramento não há detecção fresca: o stream sai
+                    // sem caixas (evita mostrar posição antiga de instrumento).
+                    emptyList()
+                }
+
+                if (streaming) {
+                    streamer?.offer(bitmap, snapshotOverlays(instruments))
+                }
+
+                if (monitoringEnabled) {
+                    val width = bitmap.width
+                    val height = bitmap.height
+                    mainExecutor.execute { onFrameProcessed(instruments, width, height) }
                 }
             }
         } catch (t: Throwable) {
@@ -143,6 +165,30 @@ class CameraController(
         } finally {
             imageProxy.close()
         }
+    }
+
+    /**
+     * Loga a média do intervalo (`DetectStats`) a cada
+     * [PipelineStats.DEFAULT_INTERVAL_MS]: fps de detecção e ms por etapa. É a
+     * base para decidir onde otimizar (pré-processamento, NPU, tracker).
+     */
+    private fun logStatsIfDue() {
+        val snapshot = stats.reportIfDue(SystemClock.elapsedRealtime()) ?: return
+        Log.i(
+            TAG_STATS,
+            "fps=${"%.1f".format(snapshot.fps)} " +
+                "decode=${"%.1f".format(snapshot.decodeMs)}ms " +
+                "pre=${"%.1f".format(snapshot.preprocessMs)}ms" +
+                "(scale=${"%.1f".format(snapshot.preprocessScaleMs)} " +
+                "px=${"%.1f".format(snapshot.preprocessPixelsMs)} " +
+                "fill=${"%.1f".format(snapshot.preprocessFillMs)}) " +
+                "infer=${"%.1f".format(snapshot.inferenceMs)}ms " +
+                "post=${"%.1f".format(snapshot.postprocessMs)}ms " +
+                "track=${"%.1f".format(snapshot.trackerMs)}ms " +
+                "total=${"%.1f".format(snapshot.totalMs)}ms " +
+                "dets=${"%.1f".format(snapshot.detectionsPerFrame)} " +
+                "maxConf=${"%.2f".format(snapshot.maxConfidence)}"
+        )
     }
 
     /**
@@ -183,6 +229,7 @@ class CameraController(
 
     companion object {
         private const val TAG = "CameraController"
+        private const val TAG_STATS = "DetectStats"
 
         /** Tempo máximo de espera do frame em andamento no shutdown (frames levam dezenas de ms). */
         private const val SHUTDOWN_TIMEOUT_SECONDS = 2L

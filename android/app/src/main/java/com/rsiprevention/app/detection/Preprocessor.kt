@@ -1,8 +1,12 @@
 package com.rsiprevention.app.detection
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.FloatBuffer
 
 /**
  * Converte um [Bitmap] RGB "em pé" na entrada `images` exigida pelo YOLO26s
@@ -13,44 +17,102 @@ import java.nio.ByteOrder
  * os floats para inteiro dentro do grafo. A entrada e saída do ONNX são
  * float32. O QNN Execution Provider compila esse grafo QDQ para a NPU Hexagon.
  *
- * **Buffers reutilizados entre frames**: o pipeline roda sempre no mesmo
- * executor single-thread de inferência (ver `CameraController`) e o buffer
- * devolvido é consumido sincronamente pelo `session.run` antes do próximo
- * frame começar — então um único par de buffers (~5 MB) pode ser reusado sem
- * sincronização extra, em vez de alocar ~5 MB por frame e pressionar o GC.
+ * **Buffers e bitmap reutilizados entre frames**: o pipeline roda sempre no
+ * mesmo executor single-thread de inferência (ver `CameraController`) e o
+ * resultado é consumido sincronamente antes do próximo frame começar — então um
+ * único jogo de buffers (~5 MB + bitmap 640×640) é reusado sem sincronização
+ * extra, em vez de alocar ~6,5 MB por frame e pressionar o GC.
  */
 object Preprocessor {
     const val MODEL_INPUT_SIZE = 640
     private const val PLANE_SIZE = MODEL_INPUT_SIZE * MODEL_INPUT_SIZE
+    private const val INV_255 = 1f / 255f
 
     private val pixels = IntArray(PLANE_SIZE)
-    private val inputBuffer: ByteBuffer =
-        ByteBuffer.allocateDirect(4 * 3 * PLANE_SIZE).order(ByteOrder.nativeOrder())
 
     /**
-     * @return ByteBuffer direto, float32, layout NCHW, normalizado [0,1].
-     *   **Reutilizado entre chamadas** — não guardar referência além da inferência
-     *   do frame atual.
+     * NCHW planar em heap: o preenchimento é feito com escritas de array (baratas)
+     * e copiado para o buffer direto em **uma** chamada `put(float[])` (cópia em
+     * bloco). O caminho anterior fazia 3 puts absolutos por pixel (~1,23 milhão
+     * de chamadas por frame) e era o gargalo do pipeline — medido em 94 ms/frame
+     * no POCO F7 (`DetectStats`).
+     */
+    private val floatPixels = FloatArray(3 * PLANE_SIZE)
+
+    private val inputBuffer: ByteBuffer =
+        ByteBuffer.allocateDirect(4 * 3 * PLANE_SIZE).order(ByteOrder.nativeOrder())
+    private val floatBuffer: FloatBuffer = inputBuffer.asFloatBuffer()
+
+    // Escala para 640×640 em bitmap/canvas reutilizados (o `createScaledBitmap`
+    // alocava um bitmap novo a cada frame).
+    private val scaleCanvas = Canvas()
+    private val scalePaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val scaleDestination = Rect(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE)
+    private var scaleScratch: Bitmap? = null
+
+    /**
+     * @return tensor direto (float32, NCHW, [0,1]) + os pixels 640×640 do
+     *   modelo + o tempo de cada sub-etapa (instrumentação). **Reutilizados
+     *   entre chamadas** — não guardar referência além do processamento do
+     *   frame atual (ver [PreprocessedFrame]).
      */
     @Synchronized
-    fun preprocess(bitmap: Bitmap): ByteBuffer {
-        val needsResize = bitmap.width != MODEL_INPUT_SIZE || bitmap.height != MODEL_INPUT_SIZE
-        val resized = if (needsResize) {
-            Bitmap.createScaledBitmap(bitmap, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, true)
-        } else {
+    fun preprocess(bitmap: Bitmap): PreprocessedFrame {
+        val scaleStartNs = System.nanoTime()
+        val modelBitmap = if (bitmap.width == MODEL_INPUT_SIZE && bitmap.height == MODEL_INPUT_SIZE) {
             bitmap
+        } else {
+            val scratch = scaleScratch ?: Bitmap
+                .createBitmap(MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, Bitmap.Config.ARGB_8888)
+                .also { scaleScratch = it }
+            scaleCanvas.setBitmap(scratch)
+            try {
+                scaleCanvas.drawBitmap(bitmap, null, scaleDestination, scalePaint)
+            } finally {
+                scaleCanvas.setBitmap(null)
+            }
+            scratch
         }
+        val scaleNs = System.nanoTime() - scaleStartNs
 
-        resized.getPixels(pixels, 0, MODEL_INPUT_SIZE, 0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE)
+        val pixelsStartNs = System.nanoTime()
+        modelBitmap.getPixels(pixels, 0, MODEL_INPUT_SIZE, 0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE)
+        val pixelsNs = System.nanoTime() - pixelsStartNs
 
-        inputBuffer.clear()
-        val floatBuffer = inputBuffer.asFloatBuffer()
-        for (pixel in pixels) floatBuffer.put(((pixel shr 16) and 0xFF) / 255f)
-        for (pixel in pixels) floatBuffer.put(((pixel shr 8) and 0xFF) / 255f)
-        for (pixel in pixels) floatBuffer.put((pixel and 0xFF) / 255f)
-        inputBuffer.rewind()
+        // NCHW planar: uma passada sobre os pixels preenchendo o array em heap e
+        // uma cópia em bloco para o buffer direto.
+        val fillStartNs = System.nanoTime()
+        for (i in pixels.indices) {
+            val pixel = pixels[i]
+            floatPixels[i] = ((pixel shr 16) and 0xFF) * INV_255
+            floatPixels[PLANE_SIZE + i] = ((pixel shr 8) and 0xFF) * INV_255
+            floatPixels[2 * PLANE_SIZE + i] = (pixel and 0xFF) * INV_255
+        }
+        floatBuffer.rewind()
+        floatBuffer.put(floatPixels)
+        inputBuffer.position(0)
+        val fillNs = System.nanoTime() - fillStartNs
 
-        if (needsResize) resized.recycle()
-        return inputBuffer
+        return PreprocessedFrame(inputBuffer, ModelFrame(pixels, MODEL_INPUT_SIZE), scaleNs, pixelsNs, fillNs)
     }
 }
+
+/**
+ * Resultado do [Preprocessor]: tensor de entrada do ONNX + referência espacial
+ * do frame no espaço do modelo, com o tempo de cada sub-etapa (instrumentação).
+ *
+ * Contrato de posse (ver KDoc de [Preprocessor]): os buffers são reutilizados na
+ * próxima chamada — consumir imediatamente, na mesma thread.
+ */
+class PreprocessedFrame internal constructor(
+    /** Tensor direto, float32, layout NCHW, normalizado [0,1]. */
+    val tensor: ByteBuffer,
+    /** Pixels 640×640 do frame (mesmo espaço das caixas do detector). */
+    val model: ModelFrame,
+    /** Bitmap → 640×640 (escala). */
+    val scaleNs: Long,
+    /** `getPixels` do bitmap 640×640. */
+    val pixelsNs: Long,
+    /** Montagem NCHW + cópia para o buffer direto. */
+    val fillNs: Long
+)

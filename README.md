@@ -69,6 +69,16 @@ Track confirmado que some antes de 1,2 s (ou com pico baixo) é **descartado em 
 
 Na tela, a lista de instrumentos mostra a **data/hora do último evento** de cada track, e a barra superior tem um painel discreto (oculto por padrão, toque para expandir) com o **log da ativação da NPU Hexagon** (ADSP_LIBRARY_PATH, escolha do backend, compilação/carregamento do contexto e verificação de sanidade).
 
+## Instrumentação (logcat)
+
+| Tag | Conteúdo | Cadência |
+|---|---|---|
+| `DetectStats` | fps de detecção e ms por etapa (decode, pré-processamento com sub-etapas escala/getPixels/montagem NCHW, inferência, pós-processamento, tracker), detecções/frame e confiança máxima | 5 s (monitoramento ligado) |
+| `StreamStats` | fps de captura/publicados, descartados, ms de encode e qualidade JPEG | 5 s (transmissão ligada) |
+| `Tracker` / `NpuLog` | confirmação/retirada/devolução de instrumentos e ativação da NPU | por evento |
+
+O template visual do tracker ([Appearance]) é extraído dos **pixels 640×640 do modelo** (o mesmo espaço das caixas) — antes era amostrado no bitmap "em pé" da câmera, o que apontava para a região errada sempre que o frame não era quadrado.
+
 ## Transmissão Wi-Fi (navegador)
 
 Sem nenhum app no outro aparelho: o celular roda um **servidor HTTP embutido** e qualquer Android/iPhone na mesma rede abre a página no navegador.
@@ -94,19 +104,22 @@ Ajuste fino: `CameraController.ANALYSIS_TARGET_SIZE` (720p → 960×540 se o fps
 ```
 android/app/src/main/java/com/rsiprevention/app/
 ├── MainActivity.kt                 # tela única: preview + overlay + lista + checagem final
-├── camera/                         # CameraX + conversão de frame
+├── camera/                         # CameraX + conversão de frame (FrameConverter, bitmap reutilizado)
 ├── detection/
-│   ├── Preprocessor.kt             # Bitmap → tensor float32 NCHW [0,1]
-│   ├── YoloWorldDetector.kt        # sessão ONNX → boxes/scores
-│   ├── Postprocessor.kt            # filtro, classe única, NMS
+│   ├── Preprocessor.kt             # Bitmap → tensor float32 NCHW [0,1] + pixels do modelo (buffers reutilizados)
+│   ├── YoloWorldDetector.kt        # sessão ONNX → boxes/scores + tempo por etapa
+│   ├── Postprocessor.kt            # filtro, classe única, NMS (uma passada)
 │   ├── ModelSelfTest.kt            # sanidade da NPU (imagem de referência)
 │   ├── Box.kt / BoxMath.kt / Detection.kt
+│   ├── DetectionFrame.kt / DetectionResult.kt / ModelFrame.kt
 ├── ort/                            # ORT + QNN (sessões, cache de contexto, backend estrito, log da NPU)
 ├── tracking/
 │   ├── InstrumentTracker.kt        # associação, confirmação, ciclo de vida
 │   ├── TrackedInstrument.kt        # estado do track (movimento, votos, template)
-│   ├── Appearance.kt               # dHash + histograma RGB do crop
+│   ├── Appearance.kt               # dHash + histograma RGB do crop (espaço do modelo)
 │   └── InstrumentStatus.kt
+├── perf/
+│   └── PipelineStats.kt            # tempos por etapa do pipeline (log DetectStats)
 ├── stream/
 │   ├── StreamServer.kt             # HTTP embutido: página, MJPEG e /frame.jpg (fallback iOS)
 │   ├── FrameStreamer.kt            # encode JPEG (30 fps) com caixas, thread própria
@@ -156,7 +169,9 @@ export\.venv\Scripts\python.exe _fix_output_split.py --check
 ## Testes
 
 - `InstrumentTrackerTest` — 13 testes JVM: falso positivo curto/persistente, certeza sustentada (pico curto e alternância de confiança não confirmam; queda breve não descarta o acumulado), confirmação e identidade após oclusão, troca de classe sem duplicar, descarte silencioso de fantasma, evento de retirada, dois objetos próximos, checagem final, caixas degeneradas e registro de data/hora dos eventos.
-- `PostprocessorTest` — filtro de confiança, colapso em classe única, NMS por classe bruta (instrumentos diferentes sobrepostos não são fundidos) e clamp das caixas ao espaço 640×640.
+- `PostprocessorTest` — 7 testes JVM: filtro de confiança, colapso em classe única, NMS por classe bruta (instrumentos diferentes sobrepostos não são fundidos), clamp das caixas ao espaço 640×640 e confiança máxima do frame na mesma passada.
+- `AppearanceTest` — 5 testes JVM da extração no espaço do modelo: mesma região ⇒ mesmo template, regiões visualmente diferentes ⇒ similaridade menor, independência da posição no frame, caixa parcialmente fora não quebra.
+- `PipelineStatsTest` — 5 testes JVM: média por etapa, fps do intervalo, reinício da janela após report e após pausa longa do monitoramento.
 - `LatestFrameSlotTest`, `StreamQualityControllerTest`, `HttpAndMjpegTest`, `HotspotAddressTest` — 17 testes JVM da transmissão: descarte do frame antigo, adaptação de qualidade, parser HTTP, formato MJPEG e escolha do IP do hotspot.
 
 ## Limitações conhecidas

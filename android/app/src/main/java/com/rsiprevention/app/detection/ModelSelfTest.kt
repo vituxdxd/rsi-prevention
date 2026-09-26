@@ -51,16 +51,16 @@ object ModelSelfTest {
             return true
         }
 
-        val (detections, maxConfidence) = runCatching { detector.detectWithScore(bitmap) }
+        val frame = runCatching { detector.detectFrame(bitmap) }
             .getOrElse { throwable ->
                 NpuLog.w("verificação de sanidade falhou na execução: ${throwable.message}")
                 return false
             }
 
-        val ok = maxConfidence >= MIN_CONFIDENCE
+        val ok = frame.maxConfidence >= MIN_CONFIDENCE
         NpuLog.i(
             "verificação de sanidade: confiança máxima %.3f (mínimo %.2f), %d detecção(ões) -> %s".format(
-                maxConfidence, MIN_CONFIDENCE, detections.size, if (ok) "aprovado" else "reprovado"
+                frame.maxConfidence, MIN_CONFIDENCE, frame.detections.size, if (ok) "aprovado" else "reprovado"
             )
         )
         return ok

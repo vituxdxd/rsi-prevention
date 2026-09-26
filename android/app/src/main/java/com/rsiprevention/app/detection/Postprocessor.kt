@@ -29,7 +29,8 @@ import com.rsiprevention.app.vocabulary.InstrumentVocabulary
  * suprimiria também **instrumentos diferentes que se sobrepõem** com IoU > 0,45
  * — dois instrumentos próximos/cruzados sumiriam da tela como um só.
  *
- * Filtro de confiança + NMS rodam aqui, em CPU/Kotlin.
+ * Filtro de confiança + NMS rodam aqui, em CPU/Kotlin. `maxConfidence` e as
+ * detecções saem da **mesma varredura** das âncoras (ver [DetectionResult]).
  */
 object Postprocessor {
     private const val CONFIDENCE_THRESHOLD = 0.25f
@@ -47,33 +48,10 @@ object Postprocessor {
     private const val NUM_PREDICTIONS = 8400
 
     /**
-     * Maior confiança crua do frame (sem NMS). Usada pelo selftest para
-     * verificar se o backend está funcionando.
-     */
-    fun maxConfidence(scoresTensor: OnnxTensor): Float {
-        // scores shape: [1, 5, 8400]; o ORT dequantiza INT8→float automaticamente
-        // para grafos QDQ
-        return maxConfidence((scoresTensor.value as Array<Array<FloatArray>>)[0])
-    }
-
-    /** Versão pura de [maxConfidence] (sem ORT) — testável em JVM. */
-    fun maxConfidence(scores: Array<FloatArray>): Float {
-        var maxConf = 0f
-
-        for (c in 0 until RAW_CLASSES) {
-            for (j in 0 until NUM_PREDICTIONS) {
-                val score = scores[c][j]
-                if (score > maxConf) maxConf = score
-            }
-        }
-        return maxConf
-    }
-
-    /**
      * Decodifica `boxes` [1, 4, 8400] + `scores` [1, 5, 8400], filtra por
      * confiança e aplica NMS.
      */
-    fun process(boxesTensor: OnnxTensor, scoresTensor: OnnxTensor): List<Detection> {
+    fun process(boxesTensor: OnnxTensor, scoresTensor: OnnxTensor): DetectionResult {
         // boxes[coord][prediction] e scores[class][prediction] — já dequantizados pelo ORT
         return process(
             (boxesTensor.value as Array<Array<FloatArray>>)[0],
@@ -87,9 +65,10 @@ object Postprocessor {
      * @param boxes `[4][8400]` cx, cy, w, h em pixels (0..640)
      * @param scores `[5][8400]` probabilidade de cada classe bruta por âncora
      */
-    fun process(boxes: Array<FloatArray>, scores: Array<FloatArray>): List<Detection> {
+    fun process(boxes: Array<FloatArray>, scores: Array<FloatArray>): DetectionResult {
         val candidates = ArrayList<RawCandidate>()
         val imgSize = Preprocessor.MODEL_INPUT_SIZE.toFloat()
+        var frameMaxConfidence = 0f
 
         for (j in 0 until NUM_PREDICTIONS) {
             // Maior score entre as 5 classes brutas — e a classe vencedora, que o
@@ -104,6 +83,7 @@ object Postprocessor {
                 }
             }
 
+            if (bestScore > frameMaxConfidence) frameMaxConfidence = bestScore
             if (bestScore < CONFIDENCE_THRESHOLD) continue
 
             // cx, cy, w, h → left, top, right, bottom
@@ -123,7 +103,7 @@ object Postprocessor {
         }
 
         // NMS com as classes brutas; só depois as detecções viram a classe única.
-        return nmsCrossClass(nmsPerClass(candidates)).map { candidate ->
+        val detections = nmsCrossClass(nmsPerClass(candidates)).map { candidate ->
             Detection(
                 classId = InstrumentVocabulary.SINGLE_CLASS_ID,
                 className = InstrumentVocabulary.SINGLE_CLASS_NAME,
@@ -131,6 +111,7 @@ object Postprocessor {
                 box = candidate.box
             )
         }
+        return DetectionResult(detections, frameMaxConfidence)
     }
 
     /** Caixa decodificada com a classe bruta vencedora, antes do colapso em classe única. */

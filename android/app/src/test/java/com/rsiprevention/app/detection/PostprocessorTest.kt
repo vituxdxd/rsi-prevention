@@ -7,7 +7,8 @@ import org.junit.Test
 
 /**
  * Testes da lógica pura do [Postprocessor] (filtro de confiança, colapso em
- * classe única, NMS) sobre tensores sintéticos — sem ORT nem NPU.
+ * classe única, NMS e confiança máxima do frame) sobre tensores sintéticos —
+ * sem ORT nem NPU.
  *
  * As dimensões 5 classes × 8400 âncoras são as saídas fixas do
  * `detector_int8.onnx` (ver KDoc de [Postprocessor]).
@@ -41,7 +42,7 @@ class PostprocessorTest {
         val scores = emptyScores()
         setAnchor(boxes, scores, 0, 100f, 100f, 50f, 50f, floatArrayOf(0.10f, 0.24f, 0.05f, 0.20f, 0.15f))
 
-        assertTrue(Postprocessor.process(boxes, scores).isEmpty())
+        assertTrue(Postprocessor.process(boxes, scores).detections.isEmpty())
     }
 
     @Test
@@ -50,7 +51,7 @@ class PostprocessorTest {
         val scores = emptyScores()
         setAnchor(boxes, scores, 0, 100f, 100f, 50f, 50f, floatArrayOf(0.10f, 0.60f, 0.20f, 0.30f, 0.15f))
 
-        val detections = Postprocessor.process(boxes, scores)
+        val detections = Postprocessor.process(boxes, scores).detections
 
         assertEquals(1, detections.size)
         val detection = detections.single()
@@ -67,7 +68,7 @@ class PostprocessorTest {
         setAnchor(boxes, scores, 0, 100f, 100f, 50f, 50f, floatArrayOf(0.8f, 0f, 0f, 0f, 0f))
         setAnchor(boxes, scores, 1, 105f, 105f, 50f, 50f, floatArrayOf(0.6f, 0f, 0f, 0f, 0f))
 
-        val detections = Postprocessor.process(boxes, scores)
+        val detections = Postprocessor.process(boxes, scores).detections
 
         assertEquals(1, detections.size)
         assertEquals(0.8f, detections.single().confidence, 1e-6f)
@@ -83,7 +84,7 @@ class PostprocessorTest {
         setAnchor(boxes, scores, 0, 150f, 150f, 100f, 100f, floatArrayOf(0f, 0f, 0f, 0.8f, 0f))
         setAnchor(boxes, scores, 1, 183f, 150f, 100f, 100f, floatArrayOf(0f, 0f, 0f, 0f, 0.7f))
 
-        val detections = Postprocessor.process(boxes, scores)
+        val detections = Postprocessor.process(boxes, scores).detections
 
         assertEquals(2, detections.size)
     }
@@ -95,7 +96,7 @@ class PostprocessorTest {
         setAnchor(boxes, scores, 0, 100f, 100f, 50f, 50f, floatArrayOf(0.8f, 0f, 0f, 0f, 0f))
         setAnchor(boxes, scores, 1, 400f, 400f, 50f, 50f, floatArrayOf(0.6f, 0f, 0f, 0f, 0f))
 
-        assertEquals(2, Postprocessor.process(boxes, scores).size)
+        assertEquals(2, Postprocessor.process(boxes, scores).detections.size)
     }
 
     @Test
@@ -106,7 +107,8 @@ class PostprocessorTest {
         setAnchor(boxes, scores, 0, 10f, 10f, 50f, 50f, floatArrayOf(0.9f, 0f, 0f, 0f, 0f))
         setAnchor(boxes, scores, 1, 630f, 630f, 50f, 50f, floatArrayOf(0.7f, 0f, 0f, 0f, 0f))
 
-        val detections = Postprocessor.process(boxes, scores).sortedByDescending { it.confidence }
+        val detections = Postprocessor.process(boxes, scores).detections
+            .sortedByDescending { it.confidence }
 
         assertEquals(2, detections.size)
         val first = detections[0].box
@@ -120,13 +122,20 @@ class PostprocessorTest {
     }
 
     @Test
-    fun `maxConfidence retorna o maior score bruto do frame`() {
+    fun `maior confianca do frame inclui ancoras abaixo do limiar de deteccao`() {
+        val boxes = emptyBoxes()
         val scores = emptyScores()
-        scores[2][123] = 0.42f
-        scores[4][8000] = 0.87f
-        scores[0][5] = 0.10f
+        // Nenhuma âncora acima de 0,25 (lista de detecções vazia), mas o pico do
+        // frame (0,24) precisa sair da mesma varredura — é ele que a verificação
+        // de sanidade do backend usa para reprovar modelos degenerados.
+        setAnchor(boxes, scores, 0, 100f, 100f, 50f, 50f, floatArrayOf(0.10f, 0.24f, 0.05f, 0.20f, 0.15f))
+        scores[2][123] = 0.22f
+        scores[4][8000] = 0.23f
 
-        assertEquals(0.87f, Postprocessor.maxConfidence(scores), 1e-6f)
+        val result = Postprocessor.process(boxes, scores)
+
+        assertTrue(result.detections.isEmpty())
+        assertEquals(0.24f, result.maxConfidence, 1e-6f)
     }
 
     companion object {

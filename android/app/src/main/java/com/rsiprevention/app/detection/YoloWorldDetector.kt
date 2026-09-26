@@ -21,21 +21,39 @@ class YoloWorldDetector(
     /**
      * Bloqueia até a NPU retornar — nunca chamar na thread principal.
      *
-     * Devolve também a **maior confiança crua** do frame, usada pela verificação
-     * de sanidade do backend (ver `ModelSelfTest`).
+     * Devolve as detecções, a maior confiança crua do frame (verificação de
+     * sanidade do backend em `ModelSelfTest`), o frame no espaço do modelo
+     * (usado pelo tracker para o template de aparência) e o tempo de cada etapa
+     * (instrumentação).
      */
-    fun detectWithScore(uprightBitmap: Bitmap): Pair<List<Detection>, Float> {
-        val imageBytes = Preprocessor.preprocess(uprightBitmap)
+    fun detectFrame(uprightBitmap: Bitmap): DetectionFrame {
+        val preprocessStartNs = System.nanoTime()
+        val preprocessed = Preprocessor.preprocess(uprightBitmap)
 
-        OnnxTensor.createTensor(env, imageBytes, IMAGE_SHAPE, OnnxJavaType.FLOAT).use { imageTensor ->
-            val inputs = mapOf("images" to imageTensor)
-            detectorSession.run(inputs).use { result ->
+        OnnxTensor.createTensor(env, preprocessed.tensor, IMAGE_SHAPE, OnnxJavaType.FLOAT).use { imageTensor ->
+            val preprocessNs = System.nanoTime() - preprocessStartNs
+
+            val inferenceStartNs = System.nanoTime()
+            detectorSession.run(mapOf("images" to imageTensor)).use { result ->
+                val inferenceNs = System.nanoTime() - inferenceStartNs
                 val boxesTensor = result.tensor(BOXES_OUTPUT)
                 val scoresTensor = result.tensor(SCORES_OUTPUT)
 
-                val maxConfidence = Postprocessor.maxConfidence(scoresTensor)
-                val detections = Postprocessor.process(boxesTensor, scoresTensor)
-                return detections to maxConfidence
+                val postprocessStartNs = System.nanoTime()
+                val processed = Postprocessor.process(boxesTensor, scoresTensor)
+                val postprocessNs = System.nanoTime() - postprocessStartNs
+
+                return DetectionFrame(
+                    detections = processed.detections,
+                    maxConfidence = processed.maxConfidence,
+                    model = preprocessed.model,
+                    preprocessNs = preprocessNs,
+                    preprocessScaleNs = preprocessed.scaleNs,
+                    preprocessPixelsNs = preprocessed.pixelsNs,
+                    preprocessFillNs = preprocessed.fillNs,
+                    inferenceNs = inferenceNs,
+                    postprocessNs = postprocessNs
+                )
             }
         }
     }
@@ -45,9 +63,6 @@ class YoloWorldDetector(
             ?: throw IllegalStateException(
                 "Saída '$name' ausente no modelo. Saídas disponíveis: ${map { it.key }}"
             )
-
-    /** Bloqueia até a NPU retornar — nunca chamar na thread principal. */
-    fun detect(uprightBitmap: Bitmap): List<Detection> = detectWithScore(uprightBitmap).first
 
     companion object {
         const val BOXES_OUTPUT = "boxes"

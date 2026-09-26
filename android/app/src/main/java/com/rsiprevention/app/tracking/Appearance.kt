@@ -1,6 +1,5 @@
 package com.rsiprevention.app.tracking
 
-import android.graphics.Bitmap
 import com.rsiprevention.app.detection.Box
 
 /**
@@ -10,6 +9,14 @@ import com.rsiprevention.app.detection.Box
  *
  * Usada pelo [InstrumentTracker] para complementar a geometria na associação
  * entre frames e para rejeitar associações em que o conteúdo visual muda.
+ *
+ * Os pixels vêm do frame **no espaço do modelo** (640×640, ver
+ * `com.rsiprevention.app.detection.ModelFrame`) — o mesmo espaço das caixas do
+ * detector. Antes a extração recebia o bitmap "em pé" da câmera e usava as
+ * coordenadas do modelo direto como pixels dele, amostrando a região errada
+ * sempre que o frame não era 640×640.
+ *
+ * Puro (sem `android.graphics`) — testável em JVM.
  */
 data class AppearanceTemplate(
     val hash: Long,
@@ -35,11 +42,15 @@ object Appearance {
     /** Passo de amostragem do histograma (px) — trade-off precisão/velocidade. */
     private const val HIST_STEP = 2
 
-    fun extract(bitmap: Bitmap, box: Box): AppearanceTemplate {
+    /**
+     * @param pixels ARGB linha a linha de [size]×[size]
+     * @param box caixa no mesmo espaço dos pixels (0..[size])
+     */
+    fun extract(pixels: IntArray, size: Int, box: Box): AppearanceTemplate {
         val region = centerRegion(box)
         return AppearanceTemplate(
-            hash = dHash(bitmap, region),
-            histogram = colorHistogram(bitmap, region)
+            hash = dHash(pixels, size, region),
+            histogram = colorHistogram(pixels, size, region)
         )
     }
 
@@ -75,11 +86,11 @@ object Appearance {
     }
 
     /** dHash: 8 comparações horizontais por linha em uma grade 9x8 de luma. */
-    private fun dHash(bitmap: Bitmap, region: Box): Long {
-        val left = region.left.toInt().coerceIn(0, bitmap.width - 1)
-        val top = region.top.toInt().coerceIn(0, bitmap.height - 1)
-        val right = region.right.toInt().coerceIn(left + 1, bitmap.width)
-        val bottom = region.bottom.toInt().coerceIn(top + 1, bitmap.height)
+    private fun dHash(pixels: IntArray, size: Int, region: Box): Long {
+        val left = region.left.toInt().coerceIn(0, size - 1)
+        val top = region.top.toInt().coerceIn(0, size - 1)
+        val right = region.right.toInt().coerceIn(left + 1, size)
+        val bottom = region.bottom.toInt().coerceIn(top + 1, size)
         val spanX = (right - left).coerceAtLeast(1)
         val spanY = (bottom - top).coerceAtLeast(1)
 
@@ -88,7 +99,7 @@ object Appearance {
             val y = (top + spanY * (row + 0.5f) / HASH_ROWS).toInt().coerceIn(top, bottom - 1)
             for (col in 0 until HASH_COLS) {
                 val x = (left + spanX * (col + 0.5f) / HASH_COLS).toInt().coerceIn(left, right - 1)
-                luma[row * HASH_COLS + col] = lumaOf(bitmap.getPixel(x, y))
+                luma[row * HASH_COLS + col] = lumaOf(pixels[y * size + x])
             }
         }
 
@@ -103,19 +114,20 @@ object Appearance {
         return hash
     }
 
-    private fun colorHistogram(bitmap: Bitmap, region: Box): FloatArray {
-        val left = region.left.toInt().coerceIn(0, bitmap.width - 1)
-        val top = region.top.toInt().coerceIn(0, bitmap.height - 1)
-        val right = region.right.toInt().coerceIn(left + 1, bitmap.width)
-        val bottom = region.bottom.toInt().coerceIn(top + 1, bitmap.height)
+    private fun colorHistogram(pixels: IntArray, size: Int, region: Box): FloatArray {
+        val left = region.left.toInt().coerceIn(0, size - 1)
+        val top = region.top.toInt().coerceIn(0, size - 1)
+        val right = region.right.toInt().coerceIn(left + 1, size)
+        val bottom = region.bottom.toInt().coerceIn(top + 1, size)
 
         val histogram = FloatArray(HIST_SIZE)
         var samples = 0
         var y = top
         while (y < bottom) {
+            val rowOffset = y * size
             var x = left
             while (x < right) {
-                val pixel = bitmap.getPixel(x, y)
+                val pixel = pixels[rowOffset + x]
                 val r = (pixel shr 16) and 0xFF
                 val g = (pixel shr 8) and 0xFF
                 val b = pixel and 0xFF

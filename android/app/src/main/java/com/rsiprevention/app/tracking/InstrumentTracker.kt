@@ -1,11 +1,11 @@
 ﻿package com.rsiprevention.app.tracking
 
-import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Log
 import com.rsiprevention.app.detection.Box
 import com.rsiprevention.app.detection.BoxMath
 import com.rsiprevention.app.detection.Detection
+import com.rsiprevention.app.detection.ModelFrame
 import com.rsiprevention.app.vocabulary.InstrumentVocabulary
 import kotlin.math.sqrt
 
@@ -130,7 +130,7 @@ class InstrumentTracker(
     @Synchronized
     fun update(
         detections: List<Detection>,
-        frameBitmap: Bitmap? = null,
+        modelFrame: ModelFrame? = null,
         nowMs: Long = SystemClock.elapsedRealtime(),
         wallNowMs: Long = System.currentTimeMillis()
     ) {
@@ -143,10 +143,11 @@ class InstrumentTracker(
             BoxMath.isPlausibleInstrument(it.box, MIN_BOX_AREA, MAX_BOX_AREA, MAX_ASPECT_RATIO)
         }
 
-        // Assinatura visual por detecção (uma extração por detecção, não por par).
-        val detectionAppearance: Map<Int, AppearanceTemplate> = if (frameBitmap != null) {
+        // Assinatura visual por detecção (uma extração por detecção, não por par),
+        // no espaço do modelo — o mesmo das caixas (ver [ModelFrame]).
+        val detectionAppearance: Map<Int, AppearanceTemplate> = if (modelFrame != null) {
             plausible.mapIndexedNotNull { index, detection ->
-                runCatching { Appearance.extract(frameBitmap, detection.box) }
+                runCatching { Appearance.extract(modelFrame.pixels, modelFrame.size, detection.box) }
                     .getOrNull()
                     ?.let { index to it }
             }.toMap()

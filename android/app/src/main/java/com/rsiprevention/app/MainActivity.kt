@@ -309,8 +309,19 @@ class MainActivity : AppCompatActivity() {
         updateInstrumentsListText(instruments)
     }
 
+    /**
+     * Assinatura barata do que a lista exibe (ids, status e instantes de evento).
+     * A lista só é remontada quando algo muda de fato — antes, sort + join +
+     * `getString` rodavam a cada frame processado na thread principal.
+     */
+    private var lastListSignature: Long = Long.MIN_VALUE
+
     private fun updateInstrumentsListText(instruments: List<TrackedInstrument>) {
-        val newText = if (instruments.isEmpty()) {
+        val signature = listSignature(instruments)
+        if (signature == lastListSignature) return
+        lastListSignature = signature
+
+        binding.instrumentsListText.text = if (instruments.isEmpty()) {
             getString(R.string.instruments_list_empty)
         } else {
             instruments
@@ -324,10 +335,18 @@ class MainActivity : AppCompatActivity() {
                     "$time — ${instrument.displayLabel} — $statusText"
                 }
         }
-        // Chamado a cada frame processado: evita re-layout da lista quando nada mudou.
-        if (binding.instrumentsListText.text.toString() != newText) {
-            binding.instrumentsListText.text = newText
+    }
+
+    /** Hash do conteúdo exibido; colisões são inofensivas (some só até o próximo evento). */
+    private fun listSignature(instruments: List<TrackedInstrument>): Long {
+        var hash = 1125899906842597L
+        hash = 31 * hash + instruments.size
+        for (instrument in instruments) {
+            hash = 31 * hash + instrument.id
+            hash = 31 * hash + instrument.status.ordinal
+            hash = 31 * hash + eventWallMs(instrument)
         }
+        return hash
     }
 
     /** Instante (relógio de parede) do último evento de status do instrumento. */
