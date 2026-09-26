@@ -69,6 +69,26 @@ Track confirmado que some antes de 1,2 s (ou com pico baixo) é **descartado em 
 
 Na tela, a lista de instrumentos mostra a **data/hora do último evento** de cada track, e a barra superior tem um painel discreto (oculto por padrão, toque para expandir) com o **log da ativação da NPU Hexagon** (ADSP_LIBRARY_PATH, escolha do backend, compilação/carregamento do contexto e verificação de sanidade).
 
+## Transmissão Wi-Fi (navegador)
+
+Sem nenhum app no outro aparelho: o celular roda um **servidor HTTP embutido** e qualquer Android/iPhone na mesma rede abre a página no navegador.
+
+1. Ative o **hotspot** no POCO F7 (Configurações do Android).
+2. Ligue o switch **"Transmitir (Wi-Fi)"** na tela principal.
+3. No outro aparelho, conecte-se ao hotspot e abra a URL exibida (ex.: `http://192.168.43.1:8080`) — ou toque no status para **mostrar o QR code** e aponte a câmera.
+
+| Aspecto | Implementação |
+|---|---|
+| Rotas | `/` (página), `/stream` (MJPEG), `/frame.jpg` (último frame) |
+| Android/Chrome | MJPEG nativo (`multipart/x-mixed-replace`) — push contínuo |
+| iPhone/Safari | **Não suporta MJPEG**; a página detecta iOS e cai automaticamente para polling em `/frame.jpg` |
+| Alvo | 720p @ 30 fps, JPEG qualidade 70 (adaptativa 70↔50 sob carga) |
+| Performance | Encode em thread própria (`rsi-stream`, prioridade FOREGROUND); frames velhos descartados ([LatestFrameSlot]); `TCP_NODELAY`; sem alocação por frame no hot path |
+| Diagnóstico | Logcat `StreamStats` a cada 5 s: fps de captura, fps publicados, descartados, ms de encode e qualidade |
+| Limites | Até 4 espectadores MJPEG; o app precisa ficar em primeiro plano (a câmera para se a tela apagar — `KEEP_SCREEN_ON` é ligado durante a transmissão); sem autenticação (rede local) |
+
+Ajuste fino: `CameraController.ANALYSIS_TARGET_SIZE` (720p → 960×540 se o fps cair) e `FrameStreamer.DEFAULT_TARGET_FPS` / `START_QUALITY`.
+
 ## Estrutura
 
 ```
@@ -87,10 +107,17 @@ android/app/src/main/java/com/rsiprevention/app/
 │   ├── TrackedInstrument.kt        # estado do track (movimento, votos, template)
 │   ├── Appearance.kt               # dHash + histograma RGB do crop
 │   └── InstrumentStatus.kt
-├── ui/OverlayView.kt
+├── stream/
+│   ├── StreamServer.kt             # HTTP embutido: página, MJPEG e /frame.jpg (fallback iOS)
+│   ├── FrameStreamer.kt            # encode JPEG (30 fps) com caixas, thread própria
+│   ├── LatestFrameSlot.kt          # descarta frames velhos (latência não acumula)
+│   ├── StreamQualityController.kt  # degradação/recuperação adaptativa da qualidade JPEG
+│   ├── StreamOverlay.kt            # snapshot imutável das caixas (sem race com o tracker)
+│   └── HotspotAddress.kt           # IP local do hotspot para montar a URL
+├── ui/                             # OverlayView.kt + QrCodeDialog.kt (QR da URL)
 └── vocabulary/InstrumentVocabulary.kt   # rótulos pt-BR (classe única)
 
-android/app/src/test/               # testes JVM (tracker, pós-processador)
+android/app/src/test/               # testes JVM (tracker, pós-processador, transmissão)
 _quantize_qnn.py                    # quantização A16W8 (get_qnn_qdq_config)
 _fix_output_split.py                # separa boxes/scores; valida o asset (--check)
 _quantize_local.py                  # experimento INT8 MinMax (documentação)
@@ -130,6 +157,7 @@ export\.venv\Scripts\python.exe _fix_output_split.py --check
 
 - `InstrumentTrackerTest` — 13 testes JVM: falso positivo curto/persistente, certeza sustentada (pico curto e alternância de confiança não confirmam; queda breve não descarta o acumulado), confirmação e identidade após oclusão, troca de classe sem duplicar, descarte silencioso de fantasma, evento de retirada, dois objetos próximos, checagem final, caixas degeneradas e registro de data/hora dos eventos.
 - `PostprocessorTest` — filtro de confiança, colapso em classe única, NMS por classe bruta (instrumentos diferentes sobrepostos não são fundidos) e clamp das caixas ao espaço 640×640.
+- `LatestFrameSlotTest`, `StreamQualityControllerTest`, `HttpAndMjpegTest`, `HotspotAddressTest` — 17 testes JVM da transmissão: descarte do frame antigo, adaptação de qualidade, parser HTTP, formato MJPEG e escolha do IP do hotspot.
 
 ## Limitações conhecidas
 

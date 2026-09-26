@@ -116,6 +116,9 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
     implementation 'com.google.code.gson:gson:2.11.0'
 
+    // Geração do QR code da URL de transmissão (só encoding — não usa a câmera).
+    implementation 'com.google.zxing:core:3.5.3'
+
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'

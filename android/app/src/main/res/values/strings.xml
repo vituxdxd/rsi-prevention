@@ -25,6 +25,14 @@
     <string name="check_complete">Checagem concluída</string>
     <string name="alert_not_returned">ATENÇÃO: instrumento não devolvido à mesa</string>
 
+    <!-- Transmissão Wi-Fi -->
+    <string name="stream_switch">Transmitir (Wi-Fi)</string>
+    <string name="stream_status_off">Desligado</string>
+    <string name="stream_status_on">Ativo: %1$s — toque para o QR</string>
+    <string name="stream_qr_title">Abrir no navegador (Wi-Fi do aparelho)</string>
+    <string name="stream_unavailable">Inicialize a NPU antes de transmitir</string>
+    <string name="stream_error">Falha ao iniciar a transmissão</string>
+
     <!-- Botões -->
     <string name="button_start_monitoring">Iniciar monitoramento</string>
     <string name="button_stop_monitoring">Parar monitoramento</string>

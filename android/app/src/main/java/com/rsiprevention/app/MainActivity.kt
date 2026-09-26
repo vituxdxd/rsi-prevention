@@ -5,11 +5,14 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import com.rsiprevention.app.alert.AlertManager
 import com.rsiprevention.app.camera.CameraController
@@ -21,9 +24,13 @@ import com.rsiprevention.app.ort.NpuActivationLog
 import com.rsiprevention.app.ort.NpuLog
 import com.rsiprevention.app.ort.OrtRuntime
 import com.rsiprevention.app.ort.QnnSessionFactory
+import com.rsiprevention.app.stream.FrameStreamer
+import com.rsiprevention.app.stream.HotspotAddress
+import com.rsiprevention.app.stream.StreamServer
 import com.rsiprevention.app.tracking.InstrumentStatus
 import com.rsiprevention.app.tracking.InstrumentTracker
 import com.rsiprevention.app.tracking.TrackedInstrument
+import com.rsiprevention.app.ui.QrCodeDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -53,6 +60,12 @@ class MainActivity : AppCompatActivity() {
     /** Evita inicializações concorrentes do pipeline (ex.: toques repetidos no retry). */
     private var pipelineInitInFlight = false
 
+    private var streamServer: StreamServer? = null
+    private var streamer: FrameStreamer? = null
+
+    /** URL exibida na tela enquanto a transmissão está ativa (para o QR). */
+    private var streamUrl: String? = null
+
     /** Recebe as atualizações do [NpuActivationLog] (de qualquer thread) e redesenha na UI. */
     private val npuLogListener: (List<NpuActivationLog.Entry>) -> Unit = { entries ->
         runOnUiThread { renderNpuLog(entries) }
@@ -71,12 +84,31 @@ class MainActivity : AppCompatActivity() {
         alertManager = AlertManager(this)
         setupButtons()
         setupNpuLogPanel()
+        enterFullscreen()
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             initializePipeline()
         } else {
             cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
+    }
+
+    /**
+     * Tela cheia: esconde a barra de status (hora, Wi-Fi, operadora). A barra
+     * reaparece temporariamente por um gesto no topo e some sozinha de novo.
+     * Reaplicado no [onResume] porque alguns sistemas (HyperOS) a mostram de
+     * volta ao voltar do segundo plano.
+     */
+    private fun enterFullscreen() {
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            hide(WindowInsetsCompat.Type.statusBars())
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        enterFullscreen()
     }
 
     private fun setupButtons() {
@@ -97,6 +129,11 @@ class MainActivity : AppCompatActivity() {
                 binding.npuStatusText.text = getString(R.string.npu_status_initializing)
                 initializePipeline()
             }
+        }
+        // Transmissão Wi-Fi (independente do monitoramento).
+        binding.streamSwitch.setOnCheckedChangeListener { _, checked -> setStreaming(checked) }
+        binding.streamStatusText.setOnClickListener {
+            streamUrl?.let { url -> QrCodeDialog.show(this, url) }
         }
     }
 
@@ -208,6 +245,63 @@ class MainActivity : AppCompatActivity() {
             tracker = tracker,
             onFrameProcessed = ::onFrameProcessed
         ).also { it.start() }
+
+        // A câmera já está no ar: a transmissão pode ser ligada pelo usuário.
+        binding.streamSwitch.isEnabled = true
+    }
+
+    private fun setStreaming(enabled: Boolean) {
+        if (enabled == (streamServer != null)) return
+        if (enabled) startStreaming() else stopStreaming()
+    }
+
+    private fun startStreaming() {
+        val controller = cameraController
+        if (controller == null) {
+            binding.streamSwitch.isChecked = false
+            Toast.makeText(this, getString(R.string.stream_unavailable), Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val server = runCatching { StreamServer().also { it.start() } }.getOrElse { t ->
+            Log.e(TAG, "Falha ao abrir o servidor de transmissão", t)
+            binding.streamSwitch.isChecked = false
+            Toast.makeText(this, getString(R.string.stream_error), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val frameStreamer = FrameStreamer(
+            boxColor = ContextCompat.getColor(this, R.color.overlay_box_on_table),
+            onJpeg = server::publishFrame
+        ).also { it.start() }
+
+        streamServer = server
+        streamer = frameStreamer
+        controller.streamer = frameStreamer
+        controller.streamingEnabled = true
+
+        // A câmera precisa do app em primeiro plano: mantém a tela acesa.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        val ip = HotspotAddress.find() ?: HotspotAddress.FALLBACK_IP
+        val url = HotspotAddress.url(ip, StreamServer.DEFAULT_PORT)
+        streamUrl = url
+        binding.streamStatusText.text = getString(R.string.stream_status_on, url)
+        Log.i(TAG, "Transmissão iniciada: $url")
+    }
+
+    private fun stopStreaming() {
+        cameraController?.streamingEnabled = false
+        cameraController?.streamer = null
+        streamer?.stop()
+        streamer = null
+        streamServer?.stop()
+        streamServer = null
+        streamUrl = null
+
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        binding.streamSwitch.isChecked = false
+        binding.streamStatusText.text = getString(R.string.stream_status_off)
+        Log.i(TAG, "Transmissão encerrada")
     }
 
     private fun onFrameProcessed(instruments: List<TrackedInstrument>, frameWidth: Int, frameHeight: Int) {
@@ -227,7 +321,7 @@ class MainActivity : AppCompatActivity() {
                         .takeIf { it > 0L }
                         ?.let(NpuActivationLog::formatTime)
                         ?: "--:--:--"
-                    "${instrument.displayLabel} — $statusText — $time"
+                    "$time — ${instrument.displayLabel} — $statusText"
                 }
         }
         // Chamado a cada frame processado: evita re-layout da lista quando nada mudou.
@@ -304,6 +398,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopStreaming()
         NpuActivationLog.removeListener(npuLogListener)
         cameraController?.shutdown()
         modelSessions?.close()

@@ -108,28 +108,73 @@
                 android:fontFamily="monospace" />
         </ScrollView>
 
+        <!-- Transmissão Wi-Fi para o navegador (independente do monitoramento) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <!-- CheckBox nativo de propósito: MaterialSwitch exige tema Material 3
+                 e quebra (NPE no StaticLayout do SwitchCompat) no tema M2 deste app. -->
+            <CheckBox
+                android:id="@+id/streamSwitch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:buttonTint="@color/teal_light"
+                android:enabled="false"
+                android:text="@string/stream_switch"
+                android:textColor="@color/white"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/streamStatusText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="end"
+                android:paddingHorizontal="8dp"
+                android:text="@string/stream_status_off"
+                android:textColor="@color/teal_light"
+                android:textSize="12sp" />
+        </LinearLayout>
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
+            android:baselineAligned="false"
+            android:gravity="center_vertical"
             android:orientation="horizontal">
 
+            <!-- Altura fixa, insets zerados e conteúdo centralizado: garante os
+                 dois botões exatamente na mesma linha/altura (o alinhamento por
+                 linha de base + insets padrão do MaterialButton desalinhava). -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/startStopButton"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="52dp"
                 android:layout_weight="1"
                 android:layout_marginEnd="8dp"
+                android:gravity="center"
+                android:includeFontPadding="false"
+                android:maxLines="1"
                 android:text="@string/button_start_monitoring"
+                android:textSize="13sp"
                 app:backgroundTint="@color/teal_primary" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/finalCheckButton"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="52dp"
                 android:layout_weight="1"
                 android:enabled="false"
+                android:gravity="center"
+                android:includeFontPadding="false"
+                android:maxLines="1"
                 android:text="@string/button_final_check"
+                android:textSize="13sp"
                 app:backgroundTint="@color/warning_amber" />
         </LinearLayout>
     </LinearLayout>
