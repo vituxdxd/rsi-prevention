@@ -38,10 +38,11 @@ import java.util.concurrent.TimeUnit
  * ligados, o mesmo bitmap "em pé" alimenta a NPU e o stream (uma conversão por
  * frame); sem monitoramento, nenhuma inferência roda e só o vídeo é enviado.
  *
- * A resolução da análise é fixada perto de 720p para dar nitidez ao stream.
- * A NPU continua recebendo 640×640 (o `Preprocessor` escala). Se a medição no
- * aparelho mostrar queda de fps, o degrau seguinte é reduzir esta resolução
- * para 960×540 (`ANALYSIS_TARGET_SIZE`, ver README).
+ * A resolução da análise é **4:3 (960×720)** — o aspecto nativo do sensor. Em
+ * retrato (720×960) o letterbox do `Preprocessor`/`Letterbox` aproveita melhor o
+ * quadro (escala uniforme de 0,667; conteúdo 480×640) do que um quadro 16:9, que
+ * resultaria em escala 0,5 (conteúdo 360×640), e ainda mostra mais campo da
+ * mesa. A NPU continua recebendo 640×640.
  */
 class CameraController(
     private val context: Context,
@@ -234,7 +235,7 @@ class CameraController(
         /** Tempo máximo de espera do frame em andamento no shutdown (frames levam dezenas de ms). */
         private const val SHUTDOWN_TIMEOUT_SECONDS = 2L
 
-        /** Resolução alvo da análise (stream 720p); a NPU sempre recebe 640×640. */
-        private val ANALYSIS_TARGET_SIZE = Size(1280, 720)
+        /** Resolução alvo da análise (4:3 nativo); a NPU sempre recebe 640×640. */
+        private val ANALYSIS_TARGET_SIZE = Size(960, 720)
     }
 }

@@ -8,6 +8,7 @@ import android.graphics.Typeface
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
+import com.rsiprevention.app.detection.Letterbox
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
@@ -43,7 +44,6 @@ class FrameStreamer(
         private const val START_QUALITY = 70
         private const val STATS_INTERVAL_MS = 5000L
         private const val POOL_CAPACITY = 3
-        private const val MODEL_INPUT_SIZE = 640f
         private const val STROKE_FRACTION = 0.006f
         private const val TEXT_FRACTION = 0.035f
         private const val LABEL_PAD_FRACTION = 0.008f
@@ -219,8 +219,9 @@ class FrameStreamer(
     private fun drawOverlays(bitmap: Bitmap, overlays: List<StreamOverlay>) {
         if (overlays.isEmpty()) return
 
-        val scaleX = bitmap.width / MODEL_INPUT_SIZE
-        val scaleY = bitmap.height / MODEL_INPUT_SIZE
+        // O bitmap transmitido é o próprio frame em pé: desfazer o letterbox do
+        // modelo (escala + padding) devolve pixels do frame 1:1.
+        val transform = Letterbox.forFrame(bitmap.width, bitmap.height)
         val stroke = bitmap.width * STROKE_FRACTION
         val textSize = bitmap.width * TEXT_FRACTION
         val padding = bitmap.width * LABEL_PAD_FRACTION
@@ -232,10 +233,10 @@ class FrameStreamer(
         try {
             for (overlay in overlays) {
                 val box = overlay.box
-                val left = box.left * scaleX
-                val top = box.top * scaleY
-                val right = box.right * scaleX
-                val bottom = box.bottom * scaleY
+                val left = transform.toFrameX(box.left)
+                val top = transform.toFrameY(box.top)
+                val right = transform.toFrameX(box.right)
+                val bottom = transform.toFrameY(box.bottom)
 
                 canvas.drawRect(left, top, right, bottom, boxPaint)
                 drawLabel(overlay.label, left, top, bottom, padding)

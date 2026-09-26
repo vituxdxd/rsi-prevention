@@ -7,6 +7,7 @@ import android.graphics.Rect
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import kotlin.math.roundToInt
 
 /**
  * Converte um [Bitmap] RGB "em pé" na entrada `images` exigida pelo YOLO26s
@@ -16,6 +17,12 @@ import java.nio.FloatBuffer
  * O grafo QDQ tem pares QuantizeLinear/DequantizeLinear internos que convertem
  * os floats para inteiro dentro do grafo. A entrada e saída do ONNX são
  * float32. O QNN Execution Provider compila esse grafo QDQ para a NPU Hexagon.
+ *
+ * **Geometria letterbox** ([Letterbox]): o frame é redimensionado preservando o
+ * aspecto e centralizado com padding cinza 114 (padrão do treino YOLO) — não há
+ * distorção de aspecto. O asset A16W8 é calibrado com essa mesma geometria (ver
+ * `_build_calibration.py`/`_quantize_qnn.py`); misturar geometrias de calibração
+ * e inferência degrada as confianças (medido em `_benchmark_preprocess.py`).
  *
  * **Buffers e bitmap reutilizados entre frames**: o pipeline roda sempre no
  * mesmo executor single-thread de inferência (ver `CameraController`) e o
@@ -43,11 +50,11 @@ object Preprocessor {
         ByteBuffer.allocateDirect(4 * 3 * PLANE_SIZE).order(ByteOrder.nativeOrder())
     private val floatBuffer: FloatBuffer = inputBuffer.asFloatBuffer()
 
-    // Escala para 640×640 em bitmap/canvas reutilizados (o `createScaledBitmap`
+    // Letterbox para 640×640 em bitmap/canvas reutilizados (o `createScaledBitmap`
     // alocava um bitmap novo a cada frame).
     private val scaleCanvas = Canvas()
     private val scalePaint = Paint(Paint.FILTER_BITMAP_FLAG)
-    private val scaleDestination = Rect(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE)
+    private val scaleDestination = Rect()
     private var scaleScratch: Bitmap? = null
 
     /**
@@ -62,11 +69,20 @@ object Preprocessor {
         val modelBitmap = if (bitmap.width == MODEL_INPUT_SIZE && bitmap.height == MODEL_INPUT_SIZE) {
             bitmap
         } else {
+            val transform = Letterbox.forFrame(bitmap.width, bitmap.height)
+            val contentWidth = (bitmap.width * transform.scale).roundToInt().coerceIn(1, MODEL_INPUT_SIZE)
+            val contentHeight = (bitmap.height * transform.scale).roundToInt().coerceIn(1, MODEL_INPUT_SIZE)
+            val left = (MODEL_INPUT_SIZE - contentWidth) / 2
+            val top = (MODEL_INPUT_SIZE - contentHeight) / 2
+            scaleDestination.set(left, top, left + contentWidth, top + contentHeight)
+
             val scratch = scaleScratch ?: Bitmap
                 .createBitmap(MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, Bitmap.Config.ARGB_8888)
                 .also { scaleScratch = it }
             scaleCanvas.setBitmap(scratch)
             try {
+                // O padding é redesenhado a cada frame (o bitmap é reutilizado).
+                scaleCanvas.drawColor(Letterbox.PAD_COLOR)
                 scaleCanvas.drawBitmap(bitmap, null, scaleDestination, scalePaint)
             } finally {
                 scaleCanvas.setBitmap(null)

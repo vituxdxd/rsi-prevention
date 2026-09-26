@@ -64,6 +64,7 @@ NUM_BOXES = 4
 NUM_CLASSES = 5
 NUM_PREDICTIONS = 8400
 SHEAR_CLASS = 3
+LETTERBOX_PAD = 114
 
 
 def producer(model: onnx.ModelProto, tensor_name: str):
@@ -163,15 +164,25 @@ def run_cpu(model_path: Path):
     return ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
 
 
-def preprocess(image_path: Path) -> np.ndarray:
+def preprocess(image_path: Path, mode: str = "stretch") -> np.ndarray:
     from PIL import Image
 
-    image = Image.open(str(image_path)).convert("RGB").resize((640, 640), Image.BILINEAR)
-    return (np.asarray(image, dtype=np.float32) / 255.0).transpose(2, 0, 1)[None]
+    image = Image.open(str(image_path)).convert("RGB")
+    if mode == "stretch":
+        image = image.resize((640, 640), Image.BILINEAR)
+        return (np.asarray(image, dtype=np.float32) / 255.0).transpose(2, 0, 1)[None]
+
+    # letterbox: mesma geometria do app (aspecto preservado, padding cinza).
+    scale = 640 / max(image.width, image.height)
+    width = max(1, round(image.width * scale))
+    height = max(1, round(image.height * scale))
+    canvas = Image.new("RGB", (640, 640), (LETTERBOX_PAD, LETTERBOX_PAD, LETTERBOX_PAD))
+    canvas.paste(image.resize((width, height), Image.BILINEAR), ((640 - width) // 2, (640 - height) // 2))
+    return (np.asarray(canvas, dtype=np.float32) / 255.0).transpose(2, 0, 1)[None]
 
 
-def validate(model_path: Path) -> bool:
-    print(f"\n== Validação CPU: {model_path} ==")
+def validate(model_path: Path, mode: str = "stretch") -> bool:
+    print(f"\n== Validação CPU: {model_path} (preprocess={mode}) ==")
     sess = run_cpu(model_path)
     names = [o.name for o in sess.get_outputs()]
     shapes = {o.name: o.shape for o in sess.get_outputs()}
@@ -187,7 +198,7 @@ def validate(model_path: Path) -> bool:
     for image in [SELFTEST, *EXTRA_IMAGES]:
         if not image.exists():
             continue
-        boxes, scores = sess.run(None, {"images": preprocess(image)})
+        boxes, scores = sess.run(None, {"images": preprocess(image, mode)})
         per_class = [float(scores[0, c].max()) for c in range(NUM_CLASSES)]
         top = int(np.argmax(per_class))
         n_above = int((scores > 0.25).sum())
@@ -223,10 +234,16 @@ def main() -> int:
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
     parser.add_argument("--check", action="store_true", help="apenas valida o asset atual")
     parser.add_argument("--no-install", action="store_true", help="gera só o preview, sem copiar para os assets")
+    parser.add_argument(
+        "--preprocess",
+        choices=["stretch", "letterbox"],
+        default="stretch",
+        help="geometria de entrada usada para validar (o app precisa usar a mesma)",
+    )
     args = parser.parse_args()
 
     if args.check:
-        return 0 if validate(ASSET_ONNX) else 1
+        return 0 if validate(ASSET_ONNX, args.preprocess) else 1
 
     if not args.source.is_file():
         raise SystemExit(f"Modelo de origem ausente: {args.source}")
@@ -253,7 +270,7 @@ def main() -> int:
     )
     print(f"  preview salvo em {PREVIEW}")
 
-    if not validate(PREVIEW / "detector_int8.onnx"):
+    if not validate(PREVIEW / "detector_int8.onnx", args.preprocess):
         return 1
 
     if args.no_install:

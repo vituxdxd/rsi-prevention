@@ -34,20 +34,19 @@ OUT_ROOT = ROOT / "models" / "_qnn_quant"
 
 
 class CalibReader(CalibrationDataReader):
+    """Lê as amostras do .h5 sob demanda (o conjunto real de frames passa de 1 GB)."""
+
     def __init__(self, h5_path: Path):
-        self.samples = []
-        with h5py.File(h5_path, "r") as f:
-            names = sorted(f["data/0"].keys(), key=lambda n: int(n.split("_")[1]))
-            for name in names:
-                self.samples.append(f[f"data/0/{name}"][()])
+        self._file = h5py.File(h5_path, "r")
+        self._names = sorted(self._file["data/0"].keys(), key=lambda n: int(n.split("_")[1]))
         self.index = 0
 
     def get_next(self):
-        if self.index >= len(self.samples):
+        if self.index >= len(self._names):
             return None
-        sample = {"images": self.samples[self.index].astype(np.float32)}
+        sample = self._file[f"data/0/{self._names[self.index]}"][()]
         self.index += 1
-        return sample
+        return {"images": sample.astype(np.float32)}
 
     def rewind(self):
         self.index = 0
@@ -56,19 +55,30 @@ class CalibReader(CalibrationDataReader):
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--activations", choices=["int8", "int16"], default="int16")
+    parser.add_argument("--source", type=Path, default=FLOAT_ONNX, help="modelo float de origem")
+    parser.add_argument("--calib", type=Path, default=CALIB_H5, help="conjunto de calibração (.h5) já pré-processado")
+    parser.add_argument("--out", type=Path, default=None, help="pasta de saída (default: models/_qnn_quant/<activations>)")
+    parser.add_argument(
+        "--preprocess",
+        choices=["stretch", "letterbox"],
+        default="stretch",
+        help="geometria usada para VALIDAR (o .h5 precisa ter sido montado com a mesma)",
+    )
     args = parser.parse_args()
 
     activation_type = QuantType.QUInt8 if args.activations == "int8" else QuantType.QUInt16
-    out_dir = OUT_ROOT / args.activations
+    out_dir = args.out or (OUT_ROOT / args.activations)
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
 
-    qdq = out_dir / "best_qnn_qdq.onnx"
     print(f"== get_qnn_qdq_config ({args.activations}) ==")
+    print(f"   fonte: {args.source}")
+    print(f"   calibração: {args.calib}")
+    qdq = out_dir / "best_qnn_qdq.onnx"
     config = get_qnn_qdq_config(
-        model_input=str(FLOAT_ONNX),
-        calibration_data_reader=CalibReader(CALIB_H5),
+        model_input=str(args.source),
+        calibration_data_reader=CalibReader(args.calib),
         calibrate_method=CalibrationMethod.MinMax,
         activation_type=activation_type,
         weight_type=QuantType.QInt8,
@@ -76,7 +86,7 @@ def main() -> int:
         activation_symmetric=False,
     )
     quantize(
-        model_input=str(FLOAT_ONNX),
+        model_input=str(args.source),
         model_output=str(qdq),
         quant_config=config,
     )
@@ -119,7 +129,7 @@ def main() -> int:
     )
 
     print("\n== Validação CPU ==")
-    if not split.validate(out_dir / "best_qnn_split.onnx"):
+    if not split.validate(out_dir / "best_qnn_split.onnx", args.preprocess):
         return 1
 
     embedded = out_dir / "best_qnn_split_embedded.onnx"

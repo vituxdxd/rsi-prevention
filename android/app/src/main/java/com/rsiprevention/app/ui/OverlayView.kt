@@ -10,6 +10,7 @@ import android.view.View
 import androidx.annotation.MainThread
 import androidx.core.content.ContextCompat
 import com.rsiprevention.app.R
+import com.rsiprevention.app.detection.Letterbox
 import com.rsiprevention.app.tracking.InstrumentStatus
 import com.rsiprevention.app.tracking.TrackedInstrument
 import kotlin.math.max
@@ -20,11 +21,12 @@ import kotlin.math.max
  *
  * Contrato de coordenadas (importante para quem chamar [update]):
  * - [TrackedInstrument.box] está no espaço de entrada do modelo, um quadrado
- *   640x640 obtido por *stretch-resize* (sem letterboxing) do frame de câmera
- *   já corrigido de rotação (ver Preprocessor). Esta view desfaz o stretch
- *   (proporção frame/640) e depois aplica um recorte central (center-crop),
- *   equivalente ao `scaleType="fillCenter"` do `PreviewView`, para que as
- *   caixas caiam visualmente sobre os instrumentos reais na pré-visualização.
+ *   640×640 obtido por *letterbox* do frame de câmera já corrigido de rotação
+ *   (ver [com.rsiprevention.app.detection.Letterbox] e Preprocessor). Esta view
+ *   desfaz o letterbox (escala + padding) e depois aplica um recorte central
+ *   (center-crop), equivalente ao `scaleType="fillCenter"` do `PreviewView`,
+ *   para que as caixas caiam visualmente sobre os instrumentos reais na
+ *   pré-visualização.
  * - `frameWidth`/`frameHeight` em [update] devem ser as dimensões do frame já
  *   em orientação "em pé" (pós-rotação), as mesmas vistas pelo modelo e pelo
  *   `PreviewView`.
@@ -72,8 +74,7 @@ class OverlayView @JvmOverloads constructor(
         super.onDraw(canvas)
         if (frameWidth <= 0 || frameHeight <= 0 || width <= 0 || height <= 0) return
 
-        val stretchX = frameWidth / MODEL_INPUT_SIZE
-        val stretchY = frameHeight / MODEL_INPUT_SIZE
+        val transform = Letterbox.forFrame(frameWidth, frameHeight)
         val cropScale = max(width / frameWidth.toFloat(), height / frameHeight.toFloat())
         val cropOffsetX = (width - frameWidth * cropScale) / 2f
         val cropOffsetY = (height - frameHeight * cropScale) / 2f
@@ -88,10 +89,10 @@ class OverlayView @JvmOverloads constructor(
             }
 
             val box = instrument.box
-            val left = (box.left * stretchX) * cropScale + cropOffsetX
-            val top = (box.top * stretchY) * cropScale + cropOffsetY
-            val right = (box.right * stretchX) * cropScale + cropOffsetX
-            val bottom = (box.bottom * stretchY) * cropScale + cropOffsetY
+            val left = transform.toFrameX(box.left) * cropScale + cropOffsetX
+            val top = transform.toFrameY(box.top) * cropScale + cropOffsetY
+            val right = transform.toFrameX(box.right) * cropScale + cropOffsetX
+            val bottom = transform.toFrameY(box.bottom) * cropScale + cropOffsetY
             val viewBox = RectF(left, top, right, bottom)
 
             boxPaint.color = color
@@ -120,7 +121,6 @@ class OverlayView @JvmOverloads constructor(
     }
 
     companion object {
-        private const val MODEL_INPUT_SIZE = 640f
         private const val STROKE_WIDTH_PX = 6f
         private const val TEXT_SIZE_PX = 36f
         private const val LABEL_PADDING_PX = 8f

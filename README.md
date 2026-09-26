@@ -17,8 +17,9 @@ A inferência de visão computacional roda **estritamente na NPU Qualcomm Hexago
 ## Pipeline
 
 ```
-CameraX (ImageAnalysis, KEEP_ONLY_LATEST)
-      │  frame → Bitmap "em pé" (stretch 640x640, RGB, [0,1], NCHW)
+CameraX (ImageAnalysis 960×720, KEEP_ONLY_LATEST)
+      │  frame → Bitmap "em pé" → letterbox 640×640 (aspecto preservado,
+      │  padding cinza 114; RGB, [0,1], NCHW)
       ▼
 Detector QNN/NPU  detector_int8.onnx  (A16W8)
       │  saídas: boxes [1,4,8400] (cx,cy,w,h)  +  scores [1,5,8400]
@@ -37,7 +38,9 @@ OverlayView (caixas) + lista de instrumentos + checagem final
 ### Modelo
 
 - Base: [joonhaim/surgical-tool-recognition-yolo26s](https://huggingface.co/joonhaim/surgical-tool-recognition-yolo26s) (`best.pt`), exportada sem NMS para `best_fixed.onnx`.
-- Quantização **A16W8** (ativações 16-bit, pesos 8-bit) via `get_qnn_qdq_config` + `quantize_static` (`_quantize_qnn.py`), calibração MinMax com imagens reais.
+- Quantização **A16W8** (ativações 16-bit, pesos 8-bit) via `get_qnn_qdq_config` + `quantize_static` (`_quantize_qnn.py`), calibração MinMax sobre um conjunto montado por `_build_calibration.py` (frames reais da bancada + imagens de teste, com augmentações).
+- **Geometria de calibração = geometria de inferência**: o asset precisa ser calibrado com o mesmo pré-processamento do app. O asset anterior (stretch) perdia confiança ao rodar com letterbox (imagem de teatro: 0,85 → 0,54 em CPU) — medido por `_benchmark_preprocess.py`.
+- Entrada **letterbox 4:3** (`Letterbox.kt`): o frame retrato (análise 960×720 → 720×960) vira conteúdo 480×640 centralizado, sem distorcer o aspecto. O *stretch* anterior distorcia até 1,78× e deixava a caixa com aspecto errado (tesoura Mayo: w/h 2,7 contra ~4 reais); com letterbox a caixa fica 3,9–4,0.
 - Grafo **QDQ portátil** (`com.microsoft` QuantizeLinear/DequantizeLinear) compilado pelo QNN EP **no próprio aparelho** na primeira execução; o contexto fica em cache (`files/models/detector_int8_ctx.onnx`).
 - Saída dividida em `boxes` e `scores` (`_fix_output_split.py`): num tensor único `[1,9,8400]` caixas e scores eram requantizados com uma escala só (dominada pelas caixas, ~640 px), zerando as confianças.
 - Por que A16W8 e não INT8 puro: as ativações 8-bit destruíam os logits da cabeça de classes (bias ≈ -6 e somas de 128 termos) e o runtime QNN divergia numericamente.
@@ -92,12 +95,12 @@ Sem nenhum app no outro aparelho: o celular roda um **servidor HTTP embutido** e
 | Rotas | `/` (página), `/stream` (MJPEG), `/frame.jpg` (último frame) |
 | Android/Chrome | MJPEG nativo (`multipart/x-mixed-replace`) — push contínuo |
 | iPhone/Safari | **Não suporta MJPEG**; a página detecta iOS e cai automaticamente para polling em `/frame.jpg` |
-| Alvo | 720p @ 30 fps, JPEG qualidade 70 (adaptativa 70↔50 sob carga) |
+| Alvo | 960×720 (4:3, aspecto do sensor) @ 30 fps, JPEG qualidade 70 (adaptativa 70↔50 sob carga) |
 | Performance | Encode em thread própria (`rsi-stream`, prioridade FOREGROUND); frames velhos descartados ([LatestFrameSlot]); `TCP_NODELAY`; sem alocação por frame no hot path |
 | Diagnóstico | Logcat `StreamStats` a cada 5 s: fps de captura, fps publicados, descartados, ms de encode e qualidade |
 | Limites | Até 4 espectadores MJPEG; o app precisa ficar em primeiro plano (a câmera para se a tela apagar — `KEEP_SCREEN_ON` é ligado durante a transmissão); sem autenticação (rede local) |
 
-Ajuste fino: `CameraController.ANALYSIS_TARGET_SIZE` (720p → 960×540 se o fps cair) e `FrameStreamer.DEFAULT_TARGET_FPS` / `START_QUALITY`.
+Ajuste fino: `CameraController.ANALYSIS_TARGET_SIZE` (960×720; o fallback da câmera escolhe o mais próximo) e `FrameStreamer.DEFAULT_TARGET_FPS` / `START_QUALITY`.
 
 ## Estrutura
 
@@ -111,6 +114,7 @@ android/app/src/main/java/com/rsiprevention/app/
 │   ├── Postprocessor.kt            # filtro, classe única, NMS (uma passada)
 │   ├── ModelSelfTest.kt            # sanidade da NPU (imagem de referência)
 │   ├── Box.kt / BoxMath.kt / Detection.kt
+│   ├── Letterbox.kt                # transformação frame ↔ modelo (aspecto preservado)
 │   ├── DetectionFrame.kt / DetectionResult.kt / ModelFrame.kt
 ├── ort/                            # ORT + QNN (sessões, cache de contexto, backend estrito, log da NPU)
 ├── tracking/
@@ -130,9 +134,11 @@ android/app/src/main/java/com/rsiprevention/app/
 ├── ui/                             # OverlayView.kt + QrCodeDialog.kt (QR da URL)
 └── vocabulary/InstrumentVocabulary.kt   # rótulos pt-BR (classe única)
 
-android/app/src/test/               # testes JVM (tracker, pós-processador, transmissão)
+android/app/src/test/               # testes JVM (tracker, pós-processador, letterbox, transmissão)
+_build_calibration.py               # monta o conjunto de calibração (.h5) na geometria do app
 _quantize_qnn.py                    # quantização A16W8 (get_qnn_qdq_config)
-_fix_output_split.py                # separa boxes/scores; valida o asset (--check)
+_benchmark_preprocess.py            # compara stretch × letterbox (float e asset quantizado)
+_fix_output_split.py                # separa boxes/scores; valida o asset (--check, --preprocess)
 _quantize_local.py                  # experimento INT8 MinMax (documentação)
 _export_joonhaim_qnn.py             # tentativa QAI Hub (histórico, não usado)
 _test_*.jpg                         # imagens para validação do detector
@@ -143,27 +149,41 @@ _test_*.jpg                         # imagens para validação do detector
 ```powershell
 $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
 cd android
-.\gradlew testDebugUnitTest     # testes JVM (tracker + tokenizer)
+.\gradlew testDebugUnitTest     # testes JVM (tracker, pós-processador, letterbox, transmissão)
 .\gradlew assembleDebug         # APK em app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ## Deploy
 
-Regra do projeto: **nunca usar `adb install`** (o HyperOS pode bloquear). Compile e envie o APK para a pasta Downloads do aparelho; a instalação é manual:
+Com **"Instalar via USB"** habilitado nas opções de desenvolvedor, `adb install -r` funciona no POCO F7 (HyperOS 2) e é o caminho mais rápido. Sem ele, o HyperOS bloqueia (`INSTALL_FAILED_USER_RESTRICTED`) e a instalação é manual:
 
 ```powershell
-# limpa o cache de modelos (obrigatório ao trocar o modelo em assets)
-adb -s <serial> shell "run-as com.rsiprevention.app.debug rm -rf files/models/*"
+adb -s <serial> install -r android\app\build\outputs\apk\debug\app-debug.apk
+# alternativa manual:
 adb -s <serial> push android\app\build\outputs\apk\debug\app-debug.apk /sdcard/Download/rsi-app.apk
 ```
 
-O cache de contexto QNN (`detector_int8_ctx.onnx`) é recompilado automaticamente na primeira abertura após trocar o modelo.
+O cache de contexto QNN (`detector_int8_ctx.onnx`) é recompilado automaticamente na primeira abertura após trocar o modelo (a assinatura `nome:tamanho` dos assets muda).
 
-## Validação rápida do modelo
+## Calibração e validação do modelo
 
-```powershell
-# roda o asset atual em CPU com as imagens de teste (espera: tesoura/classe 3 ~0,85)
-export\.venv\Scripts\python.exe _fix_output_split.py --check
+```bash
+# 1) frames reais da bancada (transmissão ligada, monitoramento desligado):
+#    amostrar /frame.jpg via USB, ex.:  adb forward tcp:18080 tcp:8080
+for i in $(seq 1 70); do curl -s -o frames/frame_$i.jpg http://127.0.0.1:18080/frame.jpg; sleep 0.3; done
+
+# 2) conjunto de calibração na geometria do app (letterbox, recorte 3:4 dos frames):
+python _build_calibration.py --mode letterbox --frames frames/ --frames-stride 3 \
+    --frames-aspect 3:4 --out calib.h5
+
+# 3) quantizar (A16W8) e validar em CPU:
+python _quantize_qnn.py --activations int16 --calib calib.h5 \
+    --out models/_qnn_quant/letterbox_final --preprocess letterbox
+
+# 4) instalar os assets e revalidar os bytes que vão no APK:
+cp models/_qnn_quant/letterbox_final/best_qnn_split.onnx android/app/src/main/assets/models/detector_int8.onnx
+cp models/_qnn_quant/letterbox_final/model.data android/app/src/main/assets/models/model.data
+python _fix_output_split.py --check --preprocess letterbox
 ```
 
 ## Testes
@@ -171,11 +191,12 @@ export\.venv\Scripts\python.exe _fix_output_split.py --check
 - `InstrumentTrackerTest` — 13 testes JVM: falso positivo curto/persistente, certeza sustentada (pico curto e alternância de confiança não confirmam; queda breve não descarta o acumulado), confirmação e identidade após oclusão, troca de classe sem duplicar, descarte silencioso de fantasma, evento de retirada, dois objetos próximos, checagem final, caixas degeneradas e registro de data/hora dos eventos.
 - `PostprocessorTest` — 7 testes JVM: filtro de confiança, colapso em classe única, NMS por classe bruta (instrumentos diferentes sobrepostos não são fundidos), clamp das caixas ao espaço 640×640 e confiança máxima do frame na mesma passada.
 - `AppearanceTest` — 5 testes JVM da extração no espaço do modelo: mesma região ⇒ mesmo template, regiões visualmente diferentes ⇒ similaridade menor, independência da posição no frame, caixa parcialmente fora não quebra.
+- `LetterboxTest` — 5 testes JVM da geometria: escala uniforme em retrato/paisagem, padding centralizado, conversão frame ↔ modelo ida e volta.
 - `PipelineStatsTest` — 5 testes JVM: média por etapa, fps do intervalo, reinício da janela após report e após pausa longa do monitoramento.
 - `LatestFrameSlotTest`, `StreamQualityControllerTest`, `HttpAndMjpegTest`, `HotspotAddressTest` — 17 testes JVM da transmissão: descarte do frame antigo, adaptação de qualidade, parser HTTP, formato MJPEG e escolha do IP do hotspot.
 
 ## Limitações conhecidas
 
 - **Sem fallback**: o app exige a NPU Hexagon; em outro aparelho/SoC o modelo pode não compilar (o binário de contexto QNN é específico do SoC, e a quantização foi validada no V73).
-- Calibração do A16W8 usa um conjunto pequeno (imagens derivadas do self-test), então os scores saturam em ~0,85. Um dataset de calibração mais amplo melhora a robustez e é o próximo passo natural.
+- A calibração atual do A16W8 usa frames reais de uma bancada improvisada + imagens de teste; a recalibração com a bancada definitiva é o próximo passo (mesmo fluxo da seção "Calibração e validação do modelo").
 - O app não distingue o tipo de instrumento (decisão de projeto: classe única).
