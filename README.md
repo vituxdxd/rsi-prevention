@@ -28,8 +28,8 @@ Postprocessor (CPU/Kotlin)
       │  filtro de confiança + NMS por classe + NMS entre classes
       ▼
 InstrumentTracker (CPU/Kotlin)
-      │  associação global + modelo de movimento + template visual
-      │  confirmação K-de-N + votação de classe + ciclo de vida REMOVED/RETURNED
+│  associação global + modelo de movimento + template visual
+│  confirmação K-de-N + certeza sustentada + votação de classe + ciclo de vida REMOVED/RETURNED
       ▼
 OverlayView (caixas) + lista de instrumentos + checagem final
 ```
@@ -46,6 +46,8 @@ OverlayView (caixas) + lista de instrumentos + checagem final
 
 O modelo bruto distingue 5 instrumentos (`clamp`, `needle_holder`, `scalpel`, `shear`, `tweezer`), mas para retenção de corpos estranhos a subclasse não importa — e a classificação fina errava muito (ex.: tesoura × pinça). O `Postprocessor` colapsa as 5 pontuações no **maior score** e emite tudo como **`instrumento_cirurgico` → "Instrumento Cirúrgico"**.
 
+O NMS, porém, roda **antes** do colapso, com a **classe bruta** vencedora de cada âncora: assim dois instrumentos diferentes que se sobrepõem (IoU entre 0,45 e 0,55) não são fundidos numa caixa só — só duplicatas do mesmo instrumento bruto (IoU > 0,45) e caixas quase idênticas entre classes (IoU > 0,55) são suprimidas.
+
 ## Comportamento (limiares)
 
 | Etapa | Constante | Valor |
@@ -57,10 +59,15 @@ O modelo bruto distingue 5 instrumentos (`clamp`, `needle_holder`, `scalpel`, `s
 | Falha máxima na janela | `MAX_MISS_RUN_IN_WINDOW` | 1 frame |
 | Confiança pico | `MIN_PEAK_CONFIDENCE` | 0,55 |
 | Confiança mediana | `MIN_MEDIAN_CONFIDENCE` | 0,40 |
+| Certeza sustentada | `HIGH_CONFIDENCE_THRESHOLD` / `MIN_HIGH_CONFIDENCE_DURATION_MS` | 0,65 / 3 s |
 | Retirada | `REMOVE_AFTER_MISSED_MS` + `MIN_ON_TABLE_MS_FOR_REMOVAL` | 1,2 s + 1,2 s |
 | Sanidade da NPU (startup) | `ModelSelfTest.MIN_CONFIDENCE` | 0,04 |
 
+A confirmação não é só K-de-N: o candidato acumula tempo apenas enquanto a confiança fica ≥ 0,65 (frames de confiança baixa ou ausência descontam o mesmo tempo). Assim um pico isolado de confiança — mesmo forte — não vira "Instrumento Cirúrgico"; são necessários ~3 s de certeza alta e persistente.
+
 Track confirmado que some antes de 1,2 s (ou com pico baixo) é **descartado em silêncio** — não vira "retirado" nem entra na lista. Objetos reais geram eventos de retirada/devolução.
+
+Na tela, a lista de instrumentos mostra a **data/hora do último evento** de cada track, e a barra superior tem um painel discreto (oculto por padrão, toque para expandir) com o **log da ativação da NPU Hexagon** (ADSP_LIBRARY_PATH, escolha do backend, compilação/carregamento do contexto e verificação de sanidade).
 
 ## Estrutura
 
@@ -74,7 +81,7 @@ android/app/src/main/java/com/rsiprevention/app/
 │   ├── Postprocessor.kt            # filtro, classe única, NMS
 │   ├── ModelSelfTest.kt            # sanidade da NPU (imagem de referência)
 │   ├── Box.kt / BoxMath.kt / Detection.kt
-├── ort/                            # ORT + QNN (sessões, cache de contexto, backend estrito)
+├── ort/                            # ORT + QNN (sessões, cache de contexto, backend estrito, log da NPU)
 ├── tracking/
 │   ├── InstrumentTracker.kt        # associação, confirmação, ciclo de vida
 │   ├── TrackedInstrument.kt        # estado do track (movimento, votos, template)
@@ -83,7 +90,7 @@ android/app/src/main/java/com/rsiprevention/app/
 ├── ui/OverlayView.kt
 └── vocabulary/InstrumentVocabulary.kt   # rótulos pt-BR (classe única)
 
-android/app/src/test/               # testes JVM (tracker, tokenizer CLIP)
+android/app/src/test/               # testes JVM (tracker, pós-processador)
 _quantize_qnn.py                    # quantização A16W8 (get_qnn_qdq_config)
 _fix_output_split.py                # separa boxes/scores; valida o asset (--check)
 _quantize_local.py                  # experimento INT8 MinMax (documentação)
@@ -121,8 +128,8 @@ export\.venv\Scripts\python.exe _fix_output_split.py --check
 
 ## Testes
 
-- `InstrumentTrackerTest` — 9 testes JVM: falso positivo curto, falso positivo persistente de baixa confiança, confirmação e identidade após oclusão, troca de classe sem duplicar, descarte silencioso de fantasma, evento de retirada, dois objetos próximos, checagem final, caixas degeneradas.
-- `ClipTokenizerTest` — compatibilidade do tokenizador CLIP legado.
+- `InstrumentTrackerTest` — 13 testes JVM: falso positivo curto/persistente, certeza sustentada (pico curto e alternância de confiança não confirmam; queda breve não descarta o acumulado), confirmação e identidade após oclusão, troca de classe sem duplicar, descarte silencioso de fantasma, evento de retirada, dois objetos próximos, checagem final, caixas degeneradas e registro de data/hora dos eventos.
+- `PostprocessorTest` — filtro de confiança, colapso em classe única, NMS por classe bruta (instrumentos diferentes sobrepostos não são fundidos) e clamp das caixas ao espaço 640×640.
 
 ## Limitações conhecidas
 

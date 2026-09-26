@@ -2,13 +2,13 @@ package com.rsiprevention.app
 
 import android.app.Application
 import android.system.Os
-import android.util.Log
+import com.rsiprevention.app.ort.NpuLog
 
 /**
  * Ponto de entrada do processo (referenciado no manifesto). A inicialização
- * pesada (sessões QNN, tokenizer CLIP, embeddings de texto) roda em
- * [MainActivity] via coroutine fora da thread principal (doc de deploy seção
- * 9.3/9.4) — é lá que existe a única tela (de monitoramento) deste app.
+ * pesada (sessão QNN do detector) roda em [MainActivity] via coroutine fora da
+ * thread principal (doc de deploy seção 9.3/9.4) — é lá que existe a única tela
+ * (de monitoramento) deste app.
  */
 class RsiApplication : Application() {
 
@@ -32,6 +32,6 @@ class RsiApplication : Application() {
             "/odm/lib/rfsa/adsp;/vendor/lib/rfsa/adsp/;/system/lib/rfsa/adsp;/system/vendor/lib/rfsa/adsp;/dsp"
         val path = "$nativeLibDir;$systemAdspDirs"
         Os.setenv("ADSP_LIBRARY_PATH", path, true)
-        Log.i("NPU_CHECK", "ADSP_LIBRARY_PATH definido: $path")
+        NpuLog.i("ADSP_LIBRARY_PATH definido: $path")
     }
 }

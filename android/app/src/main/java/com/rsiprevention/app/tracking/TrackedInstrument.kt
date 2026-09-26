@@ -32,6 +32,16 @@ data class TrackedInstrument(
     var framesSinceSeen: Int = 0,
     var wasEverRemoved: Boolean = false,
 
+    // --- Instantes de relógio de parede (System.currentTimeMillis) para o log da UI ---
+    /** Quando foi confirmado (entrou em ON_TABLE). */
+    var confirmedAtWallMs: Long = 0L,
+    /** Quando foi marcado como REMOVED. */
+    var removedAtWallMs: Long = 0L,
+    /** Quando voltou (RETURNED) após uma remoção. */
+    var returnedAtWallMs: Long = 0L,
+    /** Quando a checagem final o marcou como NOT_RETURNED. */
+    var notReturnedAtWallMs: Long = 0L,
+
     // --- Movimento (px/ms) ---
     var vx: Float = 0f,
     var vy: Float = 0f,
@@ -47,6 +57,14 @@ data class TrackedInstrument(
     /** Últimas confianças casadas (anel) para a mediana. */
     val confidenceSamples: FloatArray = FloatArray(InstrumentTracker.CONFIRM_WINDOW),
     var confidenceSampleCount: Int = 0,
+    /**
+     * Integrador de "certeza sustentada": acumula ms de presença com confiança
+     * ≥ [InstrumentTracker.HIGH_CONFIDENCE_THRESHOLD]; frames sem match ou com
+     * confiança baixa descontam o mesmo tempo. A confirmação exige
+     * [InstrumentTracker.MIN_HIGH_CONFIDENCE_DURATION_MS] acumulados — picos
+     * isolados de confiança não confirmam.
+     */
+    var highConfidenceMs: Float = 0f,
 
     // --- Classe ---
     /** Votos decaídos por classe bruta do modelo, ponderados pela confiança das detecções. */

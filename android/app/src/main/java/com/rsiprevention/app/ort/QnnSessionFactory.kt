@@ -3,7 +3,6 @@ package com.rsiprevention.app.ort
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.os.SystemClock
-import android.util.Log
 import java.io.File
 
 /**
@@ -46,8 +45,6 @@ import java.io.File
  * [ModelSessions.installModelAssets]).
  */
 object QnnSessionFactory {
-
-    private const val TAG = "NPU_CHECK"
 
     /** Backend efetivamente usado pela sessão devolvida por [createCheckedSession]. */
     enum class Backend(val label: String) {
@@ -146,8 +143,7 @@ object QnnSessionFactory {
                 val verifyStarted = SystemClock.elapsedRealtime()
                 val approved = verify(session)
                 val verified = SystemClock.elapsedRealtime() - verifyStarted
-                Log.i(
-                    TAG,
+                NpuLog.i(
                     "${candidate.backend.label}: sessão em $created ms, verificação em $verified ms -> " +
                         if (approved) "APROVADO" else "reprovado"
                 )
@@ -155,11 +151,11 @@ object QnnSessionFactory {
                     return Session(session, candidate.backend, modelFile)
                 }
             } catch (t: Throwable) {
-                Log.w(TAG, "${candidate.backend.label} indisponível: ${t.firstLine()}")
+                NpuLog.w("${candidate.backend.label} indisponível: ${t.firstLine()}")
             }
             session?.close()
         }
-        Log.w(TAG, "Nenhum backend passou na verificação para ${modelFile.name}")
+        NpuLog.w("Nenhum backend passou na verificação para ${modelFile.name}")
         return null
     }
 
@@ -214,10 +210,9 @@ object QnnSessionFactory {
 
             env.createSession(modelPath, sessionOptions).also {
                 if (loadingCachedContext) {
-                    Log.i(TAG, "Contexto QNN compilado carregado do cache (${contextCacheFile.name})")
+                    NpuLog.i("Contexto QNN compilado carregado do cache (${contextCacheFile.name})")
                 } else if (useContextCache) {
-                    Log.i(
-                        TAG,
+                    NpuLog.i(
                         "Grafo compilado na NPU agora; contexto salvo em ${contextCacheFile.name} " +
                             "para as próximas aberturas"
                     )

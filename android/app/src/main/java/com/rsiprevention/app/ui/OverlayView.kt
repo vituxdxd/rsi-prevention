@@ -56,8 +56,8 @@ class OverlayView @JvmOverloads constructor(
         typeface = Typeface.DEFAULT_BOLD
     }
 
-    private val colorOnTable = ContextCompat.getColor(context, R.color.overlay_box_on_table)
-    private val colorReturned = ContextCompat.getColor(context, R.color.success_green)
+    /** Cor única de todas as caixas (a classe exibida é sempre a mesma, "Instrumento Cirúrgico"). */
+    private val boxColor = ContextCompat.getColor(context, R.color.overlay_box_on_table)
 
     /** Chamado pela Activity, na thread principal, a cada novo resultado de tracking. */
     @MainThread
@@ -79,10 +79,11 @@ class OverlayView @JvmOverloads constructor(
         val cropOffsetY = (height - frameHeight * cropScale) / 2f
 
         for (instrument in instruments) {
+            // Cor padronizada: a subclasse/status não altera a cor da caixa (a
+            // lista de texto é quem informa o estado de cada instrumento).
             val color = when (instrument.status) {
                 InstrumentStatus.CANDIDATE -> continue // não confirmado ainda
-                InstrumentStatus.ON_TABLE -> colorOnTable
-                InstrumentStatus.RETURNED -> colorReturned
+                InstrumentStatus.ON_TABLE, InstrumentStatus.RETURNED -> boxColor
                 InstrumentStatus.REMOVED, InstrumentStatus.NOT_RETURNED -> continue
             }
 

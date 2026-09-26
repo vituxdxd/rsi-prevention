@@ -36,7 +36,7 @@ object Appearance {
     private const val HIST_STEP = 2
 
     fun extract(bitmap: Bitmap, box: Box): AppearanceTemplate {
-        val region = centerRegion(bitmap, box)
+        val region = centerRegion(box)
         return AppearanceTemplate(
             hash = dHash(bitmap, region),
             histogram = colorHistogram(bitmap, region)
@@ -68,7 +68,7 @@ object Appearance {
         return intersection.coerceIn(0f, 1f)
     }
 
-    private fun centerRegion(bitmap: Bitmap, box: Box): Box {
+    private fun centerRegion(box: Box): Box {
         val dx = box.width * CENTER_SHRINK
         val dy = box.height * CENTER_SHRINK
         return Box(box.left + dx, box.top + dy, box.right - dx, box.bottom - dy)

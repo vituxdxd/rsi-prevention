@@ -15,10 +15,19 @@ import com.rsiprevention.app.vocabulary.InstrumentVocabulary
  * seriam requantizados com uma escala só (dominada pelas caixas, ~640), o que
  * arredonda todo score para zero no INT8 — ver DIAGNOSTICO_CONFIANCA_ZERO.md.
  *
- * **Classe única**: para prevenção de retenção de corpos estranhos a subclasse
- * do instrumento não importa (e o modelo confunde muito entre classes
- * parecidas). As 5 pontuações brutas são colapsadas no **maior score**, que
- * vira a classe única [InstrumentVocabulary.SINGLE_CLASS_NAME].
+ * **Classe única com NMS por classe bruta**: para prevenção de retenção de
+ * corpos estranhos a subclasse do instrumento não importa (e o modelo confunde
+ * muito entre classes parecidas), então a [Detection] emitida é sempre a classe
+ * única [InstrumentVocabulary.SINGLE_CLASS_NAME], com o **maior score** entre
+ * as 5 pontuações brutas.
+ *
+ * O NMS, porém, usa a **classe bruta vencedora de cada âncora** (antes do
+ * colapso): a primeira passada remove duplicatas do mesmo instrumento bruto
+ * (IoU > [NMS_IOU_THRESHOLD]) e a segunda remove caixas quase idênticas entre
+ * classes diferentes (IoU > [CROSS_CLASS_NMS_IOU_THRESHOLD] — o modelo às vezes
+ * dispara `shear` e `tweezer` na mesma região). Fazer o NMS *depois* do colapso
+ * suprimiria também **instrumentos diferentes que se sobrepõem** com IoU > 0,45
+ * — dois instrumentos próximos/cruzados sumiriam da tela como um só.
  *
  * Filtro de confiança + NMS rodam aqui, em CPU/Kotlin.
  */
@@ -44,7 +53,11 @@ object Postprocessor {
     fun maxConfidence(scoresTensor: OnnxTensor): Float {
         // scores shape: [1, 5, 8400]; o ORT dequantiza INT8→float automaticamente
         // para grafos QDQ
-        val scores = (scoresTensor.value as Array<Array<FloatArray>>)[0]
+        return maxConfidence((scoresTensor.value as Array<Array<FloatArray>>)[0])
+    }
+
+    /** Versão pura de [maxConfidence] (sem ORT) — testável em JVM. */
+    fun maxConfidence(scores: Array<FloatArray>): Float {
         var maxConf = 0f
 
         for (c in 0 until RAW_CLASSES) {
@@ -62,18 +75,33 @@ object Postprocessor {
      */
     fun process(boxesTensor: OnnxTensor, scoresTensor: OnnxTensor): List<Detection> {
         // boxes[coord][prediction] e scores[class][prediction] — já dequantizados pelo ORT
-        val boxes = (boxesTensor.value as Array<Array<FloatArray>>)[0]
-        val scores = (scoresTensor.value as Array<Array<FloatArray>>)[0]
+        return process(
+            (boxesTensor.value as Array<Array<FloatArray>>)[0],
+            (scoresTensor.value as Array<Array<FloatArray>>)[0]
+        )
+    }
 
-        val candidates = ArrayList<Detection>()
+    /**
+     * Versão pura de [process] (sem ORT) — testável em JVM.
+     *
+     * @param boxes `[4][8400]` cx, cy, w, h em pixels (0..640)
+     * @param scores `[5][8400]` probabilidade de cada classe bruta por âncora
+     */
+    fun process(boxes: Array<FloatArray>, scores: Array<FloatArray>): List<Detection> {
+        val candidates = ArrayList<RawCandidate>()
         val imgSize = Preprocessor.MODEL_INPUT_SIZE.toFloat()
 
         for (j in 0 until NUM_PREDICTIONS) {
-            // Maior score entre as 5 classes brutas: qualquer instrumento conta.
+            // Maior score entre as 5 classes brutas — e a classe vencedora, que o
+            // NMS usa para não fundir instrumentos diferentes que se sobrepõem.
             var bestScore = scores[0][j]
+            var bestClass = 0
             for (c in 1 until RAW_CLASSES) {
                 val score = scores[c][j]
-                if (score > bestScore) bestScore = score
+                if (score > bestScore) {
+                    bestScore = score
+                    bestClass = c
+                }
             }
 
             if (bestScore < CONFIDENCE_THRESHOLD) continue
@@ -91,23 +119,27 @@ object Postprocessor {
                 (cy + h / 2f).coerceIn(0f, imgSize)
             )
 
-            candidates.add(
-                Detection(
-                    classId = InstrumentVocabulary.SINGLE_CLASS_ID,
-                    className = InstrumentVocabulary.SINGLE_CLASS_NAME,
-                    confidence = bestScore,
-                    box = box
-                )
-            )
+            candidates.add(RawCandidate(box = box, confidence = bestScore, rawClass = bestClass))
         }
 
-        return nmsCrossClass(nmsPerClass(candidates))
+        // NMS com as classes brutas; só depois as detecções viram a classe única.
+        return nmsCrossClass(nmsPerClass(candidates)).map { candidate ->
+            Detection(
+                classId = InstrumentVocabulary.SINGLE_CLASS_ID,
+                className = InstrumentVocabulary.SINGLE_CLASS_NAME,
+                confidence = candidate.confidence,
+                box = candidate.box
+            )
+        }
     }
 
-    /** NMS clássico (maior confiança primeiro, suprime sobreposições) por classe. */
-    private fun nmsPerClass(candidates: List<Detection>): List<Detection> {
-        val kept = ArrayList<Detection>()
-        for ((_, group) in candidates.groupBy { it.classId }) {
+    /** Caixa decodificada com a classe bruta vencedora, antes do colapso em classe única. */
+    private data class RawCandidate(val box: Box, val confidence: Float, val rawClass: Int)
+
+    /** NMS clássico (maior confiança primeiro, suprime sobreposições) por classe bruta. */
+    private fun nmsPerClass(candidates: List<RawCandidate>): List<RawCandidate> {
+        val kept = ArrayList<RawCandidate>()
+        for ((_, group) in candidates.groupBy { it.rawClass }) {
             val remaining = group.sortedByDescending { it.confidence }.toMutableList()
             while (remaining.isNotEmpty()) {
                 val best = remaining.removeAt(0)
@@ -119,11 +151,11 @@ object Postprocessor {
     }
 
     /**
-     * Segunda passada: suprime caixas de **outra classe** muito sobrepostas,
-     * mantendo a de maior confiança (a classe vencedora da região).
+     * Segunda passada: suprime caixas de **outra classe bruta** muito
+     * sobrepostas, mantendo a de maior confiança (a vencedora da região).
      */
-    private fun nmsCrossClass(candidates: List<Detection>): List<Detection> {
-        val kept = ArrayList<Detection>()
+    private fun nmsCrossClass(candidates: List<RawCandidate>): List<RawCandidate> {
+        val kept = ArrayList<RawCandidate>()
         for (candidate in candidates.sortedByDescending { it.confidence }) {
             if (kept.none { BoxMath.iou(it.box, candidate.box) > CROSS_CLASS_NMS_IOU_THRESHOLD }) {
                 kept.add(candidate)

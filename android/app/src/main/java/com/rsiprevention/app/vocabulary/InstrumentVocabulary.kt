@@ -19,9 +19,6 @@ object InstrumentVocabulary {
     const val SINGLE_CLASS_ID = 0
     const val SINGLE_CLASS_NAME = "instrumento_cirurgico"
 
-    /** Lista de classes efetivamente usadas pelo app (1 classe). */
-    val CANONICAL_PROMPTS: List<String> = listOf(SINGLE_CLASS_NAME)
-
     /**
      * Nomes brutos das 5 classes do modelo. Uso interno (votação de classe do
      * tracker); a exibição é sempre [SINGLE_CLASS_NAME].

@@ -1,5 +1,12 @@
 # Complemento obrigatório: rótulos das boxes em Português do Brasil
 
+> **Nota histórica**: este documento é a especificação original da fase
+> YOLO-World (multi-classe, com `text_encoder` CLIP). O projeto evoluiu para um
+> detector YOLO26s de **classe única** ("Instrumento Cirúrgico") — ver
+> `README.md`, seção "Classe única". A regra de UI em pt-BR continua valendo;
+> o mapeamento de classes abaixo é referência para o caso de um futuro retorno
+> a múltiplas classes.
+
 Aplicar esta regra ao projeto do POCO F7 com YOLOv8s-worldv2 / QNN Hexagon V73:
 
 ## Regra de interface

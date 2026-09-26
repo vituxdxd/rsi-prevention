@@ -43,6 +43,35 @@
             android:text="@string/monitoring_idle"
             android:textColor="@color/white"
             android:textSize="16sp" />
+
+        <!-- Log discreto da ativação da NPU: oculto por padrão, toque para alternar. -->
+        <TextView
+            android:id="@+id/npuLogToggle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:paddingVertical="2dp"
+            android:text="@string/npu_log_toggle_show"
+            android:textColor="@color/teal_light"
+            android:textSize="12sp" />
+
+        <ScrollView
+            android:id="@+id/npuLogScroll"
+            android:layout_width="match_parent"
+            android:layout_height="120dp"
+            android:layout_marginTop="4dp"
+            android:background="@color/scrim_light"
+            android:padding="6dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/npuLogText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="@color/white"
+                android:textSize="10sp" />
+        </ScrollView>
     </LinearLayout>
 
     <!-- Barra inferior: lista de instrumentos + ações -->

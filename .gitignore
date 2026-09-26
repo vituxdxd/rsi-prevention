@@ -35,6 +35,7 @@ android/*.iml
 android/captures/
 android/.cxx/
 android/app/release/
+android/build_log*.txt
 
 # --- Gradle wrapper distribution cache (não versionar jar baixado localmente) ---
 !android/gradle/wrapper/gradle-wrapper.jar

@@ -10,8 +10,13 @@ import org.junit.Test
 /**
  * Testes de comportamento do [InstrumentTracker] com detecções sintéticas
  * (sem bitmap, portanto sem template visual). Cobrem os casos que geravam
- * fantasmas na lista: falso positivo curto, troca de classe, oclusão e
- * descarte silencioso.
+ * fantasmas na lista: falso positivo curto, troca de classe, oclusão,
+ * descarte silencioso e o critério de **certeza sustentada** (confiança alta
+ * por segundos, não apenas alguns frames).
+ *
+ * Cada `tick()` avança 66 ms (~15 fps), então a confirmação por certeza
+ * sustentada exige ~47 frames de confiança alta (ver
+ * [InstrumentTracker.MIN_HIGH_CONFIDENCE_DURATION_MS]).
  */
 class InstrumentTrackerTest {
 
@@ -49,19 +54,58 @@ class InstrumentTrackerTest {
     @Test
     fun `falso positivo persistente mas de baixa confianca nao confirma`() {
         val tracker = InstrumentTracker()
-        repeat(12) {
+        repeat(100) {
             tick()
-            tracker.update(listOf(shear(confidence = 0.45f)), null, nowMs)
+            tracker.update(listOf(shear(confidence = 0.55f)), null, nowMs)
         }
         assertTrue(tracker.activeInstruments.isEmpty())
     }
 
     @Test
+    fun `confianca alta por menos de tres segundos ainda nao confirma`() {
+        val tracker = InstrumentTracker()
+        repeat(30) {
+            tick()
+            tracker.update(listOf(shear(confidence = 0.8f)), null, nowMs)
+        }
+        assertTrue(tracker.activeInstruments.isEmpty())
+    }
+
+    @Test
+    fun `confianca alta intercalada com baixa nao acumula`() {
+        val tracker = InstrumentTracker()
+        repeat(150) { index ->
+            tick()
+            val confidence = if (index % 2 == 0) 0.8f else 0.5f
+            tracker.update(listOf(shear(confidence = confidence)), null, nowMs)
+        }
+        assertTrue(tracker.activeInstruments.isEmpty())
+    }
+
+    @Test
+    fun `queda breve de confianca nao descarta o acumulado`() {
+        val tracker = InstrumentTracker()
+        repeat(40) {
+            tick()
+            tracker.update(listOf(shear(confidence = 0.8f)), null, nowMs)
+        }
+        tick()
+        tracker.update(listOf(shear(confidence = 0.5f)), null, nowMs)
+        repeat(10) {
+            tick()
+            tracker.update(listOf(shear(confidence = 0.8f)), null, nowMs)
+        }
+
+        assertEquals(1, tracker.activeInstruments.size)
+        assertEquals(InstrumentStatus.ON_TABLE, tracker.activeInstruments[0].status)
+    }
+
+    @Test
     fun `objeto real confirma e mantem identidade apos oclusao`() {
         val tracker = InstrumentTracker()
-        repeat(6) {
+        repeat(55) {
             tick()
-            tracker.update(listOf(shear(left = 100f + it * 4f)), null, nowMs)
+            tracker.update(listOf(shear()), null, nowMs)
         }
 
         val confirmed = tracker.activeInstruments
@@ -86,7 +130,7 @@ class InstrumentTrackerTest {
     @Test
     fun `troca de classe nao duplica o track e estabiliza o rotulo`() {
         val tracker = InstrumentTracker()
-        repeat(6) {
+        repeat(55) {
             tick()
             tracker.update(listOf(shear()), null, nowMs)
         }
@@ -108,7 +152,7 @@ class InstrumentTrackerTest {
         var removalEvents = 0
         val tracker = InstrumentTracker(onInstrumentRemoved = { removalEvents++ })
 
-        repeat(6) {
+        repeat(50) {
             tick()
             tracker.update(listOf(shear(confidence = 0.7f)), null, nowMs)
         }
@@ -128,7 +172,7 @@ class InstrumentTrackerTest {
         var removalEvents = 0
         val tracker = InstrumentTracker(onInstrumentRemoved = { removalEvents++ })
 
-        repeat(40) {
+        repeat(70) {
             tick()
             tracker.update(listOf(shear()), null, nowMs)
         }
@@ -146,7 +190,7 @@ class InstrumentTrackerTest {
     @Test
     fun `dois objetos proximos mantem identidades separadas`() {
         val tracker = InstrumentTracker()
-        repeat(6) {
+        repeat(55) {
             tick()
             tracker.update(listOf(shear(left = 100f), clamp(left = 300f)), null, nowMs)
         }
@@ -165,9 +209,31 @@ class InstrumentTrackerTest {
     }
 
     @Test
+    fun `eventos registram relogio de parede para o log da ui`() {
+        val tracker = InstrumentTracker()
+        val wallBase = 1_700_000_000_000L
+        repeat(70) {
+            tick()
+            tracker.update(listOf(shear()), null, nowMs, wallBase + nowMs)
+        }
+
+        val confirmed = tracker.activeInstruments.single()
+        assertTrue(confirmed.confirmedAtWallMs in (wallBase + 1)..(wallBase + nowMs))
+
+        repeat(25) {
+            tick()
+            tracker.update(emptyList(), null, nowMs, wallBase + nowMs)
+        }
+
+        val removed = tracker.activeInstruments.single()
+        assertEquals(InstrumentStatus.REMOVED, removed.status)
+        assertTrue(removed.removedAtWallMs >= confirmed.confirmedAtWallMs)
+    }
+
+    @Test
     fun `checagem final marca removidos que nao voltaram`() {
         val tracker = InstrumentTracker()
-        repeat(40) {
+        repeat(70) {
             tick()
             tracker.update(listOf(shear()), null, nowMs)
         }

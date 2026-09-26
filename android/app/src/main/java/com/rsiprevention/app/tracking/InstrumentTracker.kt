@@ -10,37 +10,41 @@ import com.rsiprevention.app.vocabulary.InstrumentVocabulary
 import kotlin.math.sqrt
 
 /**
- * Tracker multi-objeto para detecÃ§Ãµes ruidosas na NPU Hexagon.
+ * Tracker multi-objeto para detecções ruidosas na NPU Hexagon.
  *
- * Melhorias sobre a versÃ£o anterior (que deixava passar fantasmas e trocas de
+ * Melhorias sobre a versão anterior (que deixava passar fantasmas e trocas de
  * classe):
  *
- *  1. **AssociaÃ§Ã£o global**: todos os pares (track Ã— detecÃ§Ã£o) sÃ£o pontuados e
- *     atribuÃ­dos do melhor para o pior, garantindo que cada detecÃ§Ã£o vÃ¡ para o
- *     track mais provÃ¡vel (sem â€œpegar o primeiro que servirâ€).
+ *  1. **Associação global**: todos os pares (track × detecção) são pontuados e
+ *     atribuídos do melhor para o pior, garantindo que cada detecção vá para o
+ *     track mais provável (sem “pegar o primeiro que servir”).
  *
- *  2. **Modelo de movimento**: cada track guarda velocidade (px/ms) e a caixa Ã©
- *     comparada na posiÃ§Ã£o **predita** â€” essencial para objetos que se movem
- *     rÃ¡pido entre frames e para nÃ£o trocar dois instrumentos prÃ³ximos.
+ *  2. **Modelo de movimento**: cada track guarda velocidade (px/ms) e a caixa é
+ *     comparada na posição **predita** — essencial para objetos que se movem
+ *     rápido entre frames e para não trocar dois instrumentos próximos.
  *
  *  3. **Template visual**: dHash de 64 bits + histograma RGB central
- *     ([Appearance]) com limiar mÃ­nimo de similaridade. AssociaÃ§Ã£o com conteÃºdo
- *     visual muito diferente Ã© rejeitada mesmo com IoU alto.
+ *     ([Appearance]) com limiar mínimo de similaridade. Associação com conteúdo
+ *     visual muito diferente é rejeitada mesmo com IoU alto.
  *
- *  4. **VotaÃ§Ã£o de classe**: o rÃ³tulo exibido Ã© o da classe com mais votos
- *     ponderados por confianÃ§a, com histerese â€” quando o modelo alterna entre
- *     classes parecidas (ex.: tesoura Ã— pinÃ§a), o track **nÃ£o** duplica e o
- *     rÃ³tulo sÃ³ muda apÃ³s [CLASS_FLIP_FRAMES] frames consistentes.
+ *  4. **Votação de classe**: o rótulo exibido é o da classe com mais votos
+ *     ponderados por confiança, com histerese — quando o modelo alterna entre
+ *     classes parecidas (ex.: tesoura × pinça), o track **não** duplica e o
+ *     rótulo só muda após [CLASS_FLIP_FRAMES] frames consistentes.
  *
- *  5. **ConfirmaÃ§Ã£o K-de-N rigorosa**: candidato sÃ³ vira ON_TABLE com presenÃ§a
- *     em [CONFIRM_HITS] de [CONFIRM_WINDOW] frames, falha mÃ¡xima de
- *     [MAX_MISS_RUN_IN_WINDOW] frame, confianÃ§a **pico** â‰¥ [MIN_PEAK_CONFIDENCE]
- *     e confianÃ§a **mediana** â‰¥ [MIN_MEDIAN_CONFIDENCE]. Falsos positivos de
- *     poucos frames nÃ£o passam.
+ *  5. **Confirmação K-de-N + certeza sustentada**: candidato só vira ON_TABLE
+ *     com presença em [CONFIRM_HITS] de [CONFIRM_WINDOW] frames, falha máxima
+ *     de [MAX_MISS_RUN_IN_WINDOW] frame, confiança **pico** ≥
+ *     [MIN_PEAK_CONFIDENCE], **mediana** ≥ [MIN_MEDIAN_CONFIDENCE] **e** pelo
+ *     menos [MIN_HIGH_CONFIDENCE_DURATION_MS] ms acumulados de confiança ≥
+ *     [HIGH_CONFIDENCE_THRESHOLD] — frames de confiança baixa ou ausência
+ *     descontam o acumulado. Um pico isolado (mesmo alto) não confirma; certeza
+ *     alta e persistente por segundos sim. Candidatos que não se sustentam são
+ *     purgados (ver [PURGE_UNSEEN_CANDIDATE_AFTER_MS] e [CANDIDATE_MAX_AGE_MS]).
  *
  *  6. **Descarte silencioso**: track confirmado que some antes de
- *     [MIN_ON_TABLE_MS_FOR_REMOVAL] ms ou com pico baixo Ã© removido sem gerar
- *     evento de â€œretiradaâ€ (nÃ£o polui a lista nem os avisos). Objetos reais
+ *     [MIN_ON_TABLE_MS_FOR_REMOVAL] ms ou com pico baixo é removido sem gerar
+ *     evento de “retirada” (não polui a lista nem os avisos). Objetos reais
  *     que ficam na mesa geram REMOVED/RETURNED normalmente.
  */
 class InstrumentTracker(
@@ -54,7 +58,7 @@ class InstrumentTracker(
     companion object {
         private const val TAG = "Tracker"
 
-        // --- ConfirmaÃ§Ã£o ---
+        // --- Confirmação ---
         const val CONFIRM_WINDOW = 8
         const val CONFIRM_HITS = 4
         const val MAX_MISS_RUN_IN_WINDOW = 1
@@ -63,7 +67,20 @@ class InstrumentTracker(
         const val MIN_PEAK_CONFIDENCE = 0.55f
         const val MIN_MEDIAN_CONFIDENCE = 0.40f
 
-        // --- AssociaÃ§Ã£o ---
+        /**
+         * Certeza sustentada: o K-de-N acima só cobre a presença recente
+         * (~[CONFIRM_WINDOW] frames). Para virar instrumento confirmado, o
+         * candidato também precisa acumular [MIN_HIGH_CONFIDENCE_DURATION_MS] ms
+         * de presença com confiança ≥ [HIGH_CONFIDENCE_THRESHOLD]. O integrador
+         * desconta o mesmo tempo em frames com confiança baixa ou sem detecção —
+         * um pico isolado (mesmo alto) não soma; certeza persistente sim.
+         */
+        const val HIGH_CONFIDENCE_THRESHOLD = 0.65f
+        const val MIN_HIGH_CONFIDENCE_DURATION_MS = 3000f
+        /** Passo máximo de integração/desconto por frame (protege contra pausas longas do monitoramento). */
+        const val MAX_CONFIDENCE_STEP_MS = 250f
+
+        // --- Associação ---
         const val MIN_MATCH_SCORE = 0.30f
         const val MIN_APPEARANCE_SIMILARITY = 0.35f
         const val GATE_IOU = 0.05f
@@ -76,16 +93,19 @@ class InstrumentTracker(
         // --- Ciclo de vida (tempo) ---
         const val VISIBLE_GRACE_MS = 450L
         const val REMOVE_AFTER_MISSED_MS = 1200L
-        const val PURGE_UNCONFIRMED_AFTER_MS = 900L
+        /** Candidato sem nenhuma detecção por este tempo é descartado (fantasma). */
+        const val PURGE_UNSEEN_CANDIDATE_AFTER_MS = 900L
+        /** Candidato que nunca atinge a certeza sustentada é descartado (libera slots). */
+        const val CANDIDATE_MAX_AGE_MS = 10_000L
         const val MIN_ON_TABLE_MS_FOR_REMOVAL = 1200L
 
-        // --- Plausibilidade geomÃ©trica ---
+        // --- Plausibilidade geométrica ---
         const val MIN_BOX_AREA = 300f
         const val MAX_BOX_AREA = 0.75f * 640f * 640f
         const val MAX_ASPECT_RATIO = 14f
         const val MAX_TRACKS = 12
 
-        // --- VotaÃ§Ã£o de classe ---
+        // --- Votação de classe ---
         const val CLASS_VOTE_DECAY = 0.85f
         const val CLASS_FLIP_MARGIN = 0.20f
         const val CLASS_FLIP_FRAMES = 3
@@ -94,8 +114,8 @@ class InstrumentTracker(
     }
 
     /**
-     * Instrumentos para exibiÃ§Ã£o: confirmados e visÃ­veis agora (ou dentro da
-     * carÃªncia de [VISIBLE_GRACE_MS]) mais o histÃ³rico de removidos/nÃ£o
+     * Instrumentos para exibição: confirmados e visíveis agora (ou dentro da
+     * carência de [VISIBLE_GRACE_MS]) mais o histórico de removidos/não
      * devolvidos (usado pela checagem final).
      */
     val activeInstruments: List<TrackedInstrument>
@@ -111,15 +131,19 @@ class InstrumentTracker(
     fun update(
         detections: List<Detection>,
         frameBitmap: Bitmap? = null,
-        nowMs: Long = SystemClock.elapsedRealtime()
+        nowMs: Long = SystemClock.elapsedRealtime(),
+        wallNowMs: Long = System.currentTimeMillis()
     ) {
+        // Incremento de tempo desde o frame anterior processado, limitado para
+        // que uma pausa longa do monitoramento não infle o integrador de certeza.
+        val frameDtMs = (nowMs - lastUpdateMs).coerceIn(0L, MAX_CONFIDENCE_STEP_MS.toLong()).toFloat()
         lastUpdateMs = nowMs
 
         val plausible = detections.filter {
             BoxMath.isPlausibleInstrument(it.box, MIN_BOX_AREA, MAX_BOX_AREA, MAX_ASPECT_RATIO)
         }
 
-        // Assinatura visual por detecÃ§Ã£o (uma extraÃ§Ã£o por detecÃ§Ã£o, nÃ£o por par).
+        // Assinatura visual por detecção (uma extração por detecção, não por par).
         val detectionAppearance: Map<Int, AppearanceTemplate> = if (frameBitmap != null) {
             plausible.mapIndexedNotNull { index, detection ->
                 runCatching { Appearance.extract(frameBitmap, detection.box) }
@@ -132,7 +156,7 @@ class InstrumentTracker(
 
         val predicted = tracked.map { predictedBox(it, nowMs) }
 
-        // 1. PontuaÃ§Ã£o de todos os pares e atribuiÃ§Ã£o global (melhor primeiro).
+        // 1. Pontuação de todos os pares e atribuição global (melhor primeiro).
         data class Pairing(val trackIndex: Int, val detectionIndex: Int, val score: Float)
 
         val pairings = ArrayList<Pairing>()
@@ -161,16 +185,17 @@ class InstrumentTracker(
                 tracked[pairing.trackIndex],
                 plausible[pairing.detectionIndex],
                 detectionAppearance[pairing.detectionIndex],
-                nowMs
+                nowMs,
+                wallNowMs
             )
         }
 
-        // 2. Tracks sem match: ausÃªncia.
+        // 2. Tracks sem match: ausência.
         for (trackIndex in tracked.indices) {
-            if (!matchedTracks[trackIndex]) registerMiss(tracked[trackIndex], nowMs)
+            if (!matchedTracks[trackIndex]) registerMiss(tracked[trackIndex], nowMs, frameDtMs, wallNowMs)
         }
 
-        // 3. DetecÃ§Ãµes sem match: novo candidato (se confiÃ¡vel e couber).
+        // 3. Detecções sem match: novo candidato (se confiável e couber).
         for (detectionIndex in plausible.indices) {
             if (matchedDetections[detectionIndex]) continue
             val detection = plausible[detectionIndex]
@@ -182,11 +207,27 @@ class InstrumentTracker(
             tracked.add(newCandidate(detection, detectionAppearance[detectionIndex], nowMs))
         }
 
-        // 4. Purga: candidatos velhos e falsos positivos descartados.
-        tracked.removeAll { track ->
-            track.discarded ||
+        // 4. Purga: falsos positivos descartados e candidatos que não se sustentam.
+        val iterator = tracked.iterator()
+        while (iterator.hasNext()) {
+            val track = iterator.next()
+            val purge = track.discarded ||
                 (track.status == InstrumentStatus.CANDIDATE &&
-                    nowMs - track.firstSeenMs >= PURGE_UNCONFIRMED_AFTER_MS)
+                    (nowMs - track.lastSeenMs >= PURGE_UNSEEN_CANDIDATE_AFTER_MS ||
+                        nowMs - track.firstSeenMs >= CANDIDATE_MAX_AGE_MS))
+            if (!purge) continue
+            if (track.status == InstrumentStatus.CANDIDATE && !track.discarded) {
+                // Diagnóstico: por que um objeto real pode não ter virado instrumento
+                // (confiança que não se manteve ≥ limiar pelo tempo mínimo).
+                Log.i(
+                    TAG,
+                    "Candidato descartado sem confirmar: ${track.className} id=${track.id} " +
+                        "(certeza=${"%.1f".format(track.highConfidenceMs / 1000f)}s de " +
+                        "${"%.1f".format(MIN_HIGH_CONFIDENCE_DURATION_MS / 1000f)}s, " +
+                        "pico=${"%.1f".format(track.peakConfidence * 100)}%)"
+                )
+            }
+            iterator.remove()
         }
     }
 
@@ -194,17 +235,18 @@ class InstrumentTracker(
         track: TrackedInstrument,
         detection: Detection,
         appearance: AppearanceTemplate?,
-        nowMs: Long
+        nowMs: Long,
+        wallNowMs: Long
     ) {
         val dtMs = (nowMs - track.lastSeenMs).coerceAtLeast(1L).toFloat()
 
-        // Velocidade suavizada (px/ms), limitada para nÃ£o explodir.
+        // Velocidade suavizada (px/ms), limitada para não explodir.
         track.vx = smoothVelocity(track.vx, (detection.box.centerX - track.box.centerX) / dtMs)
         track.vy = smoothVelocity(track.vy, (detection.box.centerY - track.box.centerY) / dtMs)
         track.vw = smoothVelocity(track.vw, (detection.box.width - track.box.width) / dtMs)
         track.vh = smoothVelocity(track.vh, (detection.box.height - track.box.height) / dtMs)
 
-        // Caixa e confianÃ§a suavizadas (display estÃ¡vel).
+        // Caixa e confiança suavizadas (display estável).
         track.box = track.box.lerp(detection.box, BOX_SMOOTHING)
         track.confidence = if (track.confidence <= 0f) {
             detection.confidence
@@ -225,15 +267,25 @@ class InstrumentTracker(
 
         updateClassVotes(track, detection)
 
+        // Integrador de certeza sustentada: alta confiança soma o tempo do frame,
+        // confiança baixa desconta o mesmo tempo (nunca abaixo de zero).
+        val stepMs = dtMs.coerceIn(1f, MAX_CONFIDENCE_STEP_MS)
+        track.highConfidenceMs = if (detection.confidence >= HIGH_CONFIDENCE_THRESHOLD) {
+            track.highConfidenceMs + stepMs
+        } else {
+            (track.highConfidenceMs - stepMs).coerceAtLeast(0f)
+        }
+
         if (appearance != null) {
             track.appearance = track.appearance?.let { Appearance.blend(it, appearance) } ?: appearance
         }
 
         when (track.status) {
-            InstrumentStatus.CANDIDATE -> tryConfirm(track, nowMs)
+            InstrumentStatus.CANDIDATE -> tryConfirm(track, nowMs, wallNowMs)
             InstrumentStatus.REMOVED, InstrumentStatus.NOT_RETURNED -> {
                 track.status = InstrumentStatus.RETURNED
                 track.onTableSinceMs = nowMs
+                track.returnedAtWallMs = wallNowMs
                 Log.i(TAG, "Devolvido: ${track.className} id=${track.id}")
                 onInstrumentReturned?.invoke(track)
             }
@@ -241,28 +293,32 @@ class InstrumentTracker(
         }
     }
 
-    private fun tryConfirm(track: TrackedInstrument, nowMs: Long) {
+    private fun tryConfirm(track: TrackedInstrument, nowMs: Long, wallNowMs: Long) {
         val confirmed = track.hitsInWindow >= CONFIRM_HITS &&
             longestMissRun(track.hitMask, CONFIRM_WINDOW, track.ageFrames) <= MAX_MISS_RUN_IN_WINDOW &&
             track.ageFrames >= MIN_AGE_FRAMES &&
             track.peakConfidence >= MIN_PEAK_CONFIDENCE &&
-            track.medianConfidence >= MIN_MEDIAN_CONFIDENCE
+            track.medianConfidence >= MIN_MEDIAN_CONFIDENCE &&
+            track.highConfidenceMs >= MIN_HIGH_CONFIDENCE_DURATION_MS
         if (!confirmed) return
 
         track.status = InstrumentStatus.ON_TABLE
         track.onTableSinceMs = nowMs
+        track.confirmedAtWallMs = wallNowMs
         Log.i(
             TAG,
             "Confirmado: ${track.className} id=${track.id} " +
                 "(${track.hitsInWindow}/${CONFIRM_WINDOW} frames, " +
                 "pico=${"%.1f".format(track.peakConfidence * 100)}%, " +
-                "mediana=${"%.1f".format(track.medianConfidence * 100)}%)"
+                "mediana=${"%.1f".format(track.medianConfidence * 100)}%, " +
+                "certeza=${"%.1f".format(track.highConfidenceMs / 1000f)}s)"
         )
     }
 
-    private fun registerMiss(track: TrackedInstrument, nowMs: Long) {
+    private fun registerMiss(track: TrackedInstrument, nowMs: Long, frameDtMs: Float, wallNowMs: Long) {
         track.framesSinceSeen++
         track.hitMask = (track.hitMask shl 1) and WINDOW_MASK
+        track.highConfidenceMs = (track.highConfidenceMs - frameDtMs).coerceAtLeast(0f)
 
         if (track.status == InstrumentStatus.CANDIDATE) return
 
@@ -276,11 +332,12 @@ class InstrumentTracker(
         if (qualifiesAsRemoval) {
             track.status = InstrumentStatus.REMOVED
             track.wasEverRemoved = true
+            track.removedAtWallMs = wallNowMs
             Log.i(TAG, "Retirado: ${track.className} id=${track.id}")
             onInstrumentRemoved?.invoke(track)
         } else {
             track.discarded = true
-            Log.i(TAG, "Descartado (curto/baixa confianÃ§a): ${track.className} id=${track.id}")
+            Log.i(TAG, "Descartado (curto/baixa confiança): ${track.className} id=${track.id}")
         }
     }
 
@@ -398,7 +455,11 @@ class InstrumentTracker(
     @Synchronized
     fun performFinalCheck(): List<TrackedInstrument> {
         val notReturned = tracked.filter { it.isConfirmed && it.status == InstrumentStatus.REMOVED }
-        notReturned.forEach { it.status = InstrumentStatus.NOT_RETURNED }
+        val wallNow = System.currentTimeMillis()
+        notReturned.forEach {
+            it.status = InstrumentStatus.NOT_RETURNED
+            it.notReturnedAtWallMs = wallNow
+        }
         return notReturned
     }
 

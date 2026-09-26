@@ -2,7 +2,7 @@ package com.rsiprevention.app.detection
 
 import android.content.Context
 import android.graphics.BitmapFactory
-import android.util.Log
+import com.rsiprevention.app.ort.NpuLog
 
 /**
  * Verificação de sanidade do detector: roda o modelo numa imagem de referência
@@ -25,7 +25,6 @@ import android.util.Log
  */
 object ModelSelfTest {
 
-    private const val TAG = "NPU_CHECK"
     private const val ASSET_NAME = "selftest_scissors.jpg"
 
     /**
@@ -48,19 +47,18 @@ object ModelSelfTest {
         }.getOrNull()
 
         if (bitmap == null) {
-            Log.w(TAG, "sem assets/$ASSET_NAME — verificação de sanidade ignorada")
+            NpuLog.w("sem assets/$ASSET_NAME — verificação de sanidade ignorada")
             return true
         }
 
         val (detections, maxConfidence) = runCatching { detector.detectWithScore(bitmap) }
             .getOrElse { throwable ->
-                Log.w(TAG, "verificação de sanidade falhou na execução: ${throwable.message}")
+                NpuLog.w("verificação de sanidade falhou na execução: ${throwable.message}")
                 return false
             }
 
         val ok = maxConfidence >= MIN_CONFIDENCE
-        Log.i(
-            TAG,
+        NpuLog.i(
             "verificação de sanidade: confiança máxima %.3f (mínimo %.2f), %d detecção(ões) -> %s".format(
                 maxConfidence, MIN_CONFIDENCE, detections.size, if (ok) "aprovado" else "reprovado"
             )

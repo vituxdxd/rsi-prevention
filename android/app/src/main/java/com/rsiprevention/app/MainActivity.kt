@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
+import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -14,13 +15,13 @@ import com.rsiprevention.app.alert.AlertManager
 import com.rsiprevention.app.camera.CameraController
 import com.rsiprevention.app.databinding.ActivityMainBinding
 import com.rsiprevention.app.detection.ModelSelfTest
-import com.rsiprevention.app.detection.Postprocessor
 import com.rsiprevention.app.detection.YoloWorldDetector
 import com.rsiprevention.app.ort.ModelSessions
+import com.rsiprevention.app.ort.NpuActivationLog
+import com.rsiprevention.app.ort.NpuLog
 import com.rsiprevention.app.ort.OrtRuntime
 import com.rsiprevention.app.ort.QnnSessionFactory
-import com.rsiprevention.app.text.ClipTokenizer
-import com.rsiprevention.app.text.TextEmbeddingProvider
+import com.rsiprevention.app.tracking.InstrumentStatus
 import com.rsiprevention.app.tracking.InstrumentTracker
 import com.rsiprevention.app.tracking.TrackedInstrument
 import kotlinx.coroutines.Dispatchers
@@ -31,10 +32,14 @@ import kotlinx.coroutines.withContext
  * Única tela deste app (doc de deploy seção 0/6): preview de câmera + overlay
  * de detecção/tracking + controles de monitoramento e checagem final de RSI.
  *
- * Fluxo: permissão de câmera -> carregar sessões QNN + tokenizer + embeddings
- * de texto (uma única vez, fora da thread principal) -> ligar CameraX -> a
- * cada frame processado (enquanto o monitoramento está ativo), atualizar
- * overlay + lista de instrumentos.
+ * Fluxo: permissão de câmera -> carregar a sessão QNN do detector (uma única
+ * vez, fora da thread principal) -> ligar CameraX -> a cada frame processado
+ * (enquanto o monitoramento está ativo), atualizar overlay + lista de
+ * instrumentos.
+ *
+ * A lista de instrumentos mostra data/hora do último evento de cada track, e a
+ * barra superior tem um painel discreto (expansível/ocultável) com o log da
+ * ativação da NPU Hexagon ([NpuActivationLog]).
  */
 class MainActivity : AppCompatActivity() {
 
@@ -44,6 +49,14 @@ class MainActivity : AppCompatActivity() {
     private var cameraController: CameraController? = null
     private lateinit var tracker: InstrumentTracker
     private lateinit var alertManager: AlertManager
+
+    /** Evita inicializações concorrentes do pipeline (ex.: toques repetidos no retry). */
+    private var pipelineInitInFlight = false
+
+    /** Recebe as atualizações do [NpuActivationLog] (de qualquer thread) e redesenha na UI. */
+    private val npuLogListener: (List<NpuActivationLog.Entry>) -> Unit = { entries ->
+        runOnUiThread { renderNpuLog(entries) }
+    }
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -57,6 +70,7 @@ class MainActivity : AppCompatActivity() {
 
         alertManager = AlertManager(this)
         setupButtons()
+        setupNpuLogPanel()
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             initializePipeline()
@@ -75,6 +89,41 @@ class MainActivity : AppCompatActivity() {
                 cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             }
         }
+        // Retry da inicialização do pipeline (NPU) tocando no status de erro.
+        binding.npuStatusText.setOnClickListener {
+            if (modelSessions == null &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+            ) {
+                binding.npuStatusText.text = getString(R.string.npu_status_initializing)
+                initializePipeline()
+            }
+        }
+    }
+
+    /** Painel discreto do log da NPU: começa oculto; o toque alterna mostrar/ocultar. */
+    private fun setupNpuLogPanel() {
+        binding.npuLogToggle.setOnClickListener {
+            val expand = binding.npuLogScroll.visibility != View.VISIBLE
+            binding.npuLogScroll.visibility = if (expand) View.VISIBLE else View.GONE
+            binding.npuLogToggle.text = getString(
+                if (expand) R.string.npu_log_toggle_hide else R.string.npu_log_toggle_show
+            )
+            if (expand) scrollNpuLogToEnd()
+        }
+        NpuActivationLog.addListener(npuLogListener)
+    }
+
+    private fun renderNpuLog(entries: List<NpuActivationLog.Entry>) {
+        binding.npuLogText.text = if (entries.isEmpty()) {
+            getString(R.string.npu_log_empty)
+        } else {
+            entries.joinToString("\n") { "${NpuActivationLog.formatTime(it.wallMs)} ${it.message}" }
+        }
+        if (binding.npuLogScroll.visibility == View.VISIBLE) scrollNpuLogToEnd()
+    }
+
+    private fun scrollNpuLogToEnd() {
+        binding.npuLogScroll.post { binding.npuLogScroll.fullScroll(View.FOCUS_DOWN) }
     }
 
     private fun showPermissionDenied() {
@@ -83,11 +132,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showPipelineInitError() {
-        binding.npuStatusText.text = getString(R.string.npu_status_error)
+        binding.npuStatusText.text = getString(R.string.npu_status_error_retry)
     }
 
-    /** Carrega sessões QNN + tokenizer + embeddings de texto fora da thread principal (doc seção 9.3/9.4). */
+    /** Carrega a sessão QNN do detector fora da thread principal (doc seção 9.3/9.4). */
     private fun initializePipeline() {
+        if (pipelineInitInFlight) return
+        pipelineInitInFlight = true
         lifecycleScope.launch(Dispatchers.Default) {
             try {
                 val sessions = ModelSessions.create(applicationContext, OrtRuntime.environment) { session ->
@@ -102,12 +153,24 @@ class MainActivity : AppCompatActivity() {
                 val detector = YoloWorldDetector(OrtRuntime.environment, sessions.detectorSession)
 
                 withContext(Dispatchers.Main) {
+                    pipelineInitInFlight = false
+                    if (isDestroyed || isFinishing) {
+                        // A tela morreu durante a carga (que pode levar minutos na
+                        // 1ª compilação NPU): fecha as sessões em vez de vazá-las
+                        // ligando a câmera numa Activity destruída.
+                        sessions.close()
+                        return@withContext
+                    }
                     modelSessions = sessions
                     onPipelineReady(detector, sessions.backend)
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "Falha ao inicializar pipeline de detecção", t)
-                withContext(Dispatchers.Main) { showPipelineInitError() }
+                NpuLog.w("Falha ao inicializar o pipeline: ${t.message?.lineSequence()?.firstOrNull() ?: t}")
+                withContext(Dispatchers.Main) {
+                    pipelineInitInFlight = false
+                    if (!isDestroyed && !isFinishing) showPipelineInitError()
+                }
             }
         }
     }
@@ -122,7 +185,7 @@ class MainActivity : AppCompatActivity() {
                 QnnSessionFactory.Backend.CPU -> R.string.npu_status_cpu
             }
         )
-        Log.i("NPU_CHECK", getString(R.string.backend_confirmation_format, backend.label))
+        NpuLog.i(getString(R.string.backend_confirmation_format, backend.label))
 
         tracker = InstrumentTracker(
             onInstrumentRemoved = { instrument ->
@@ -153,19 +216,34 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateInstrumentsListText(instruments: List<TrackedInstrument>) {
-        binding.instrumentsListText.text = if (instruments.isEmpty()) {
+        val newText = if (instruments.isEmpty()) {
             getString(R.string.instruments_list_empty)
         } else {
             instruments
-                .groupBy { it.displayLabel to it.status }
-                .entries
-                .sortedWith(compareBy({ it.key.second.ordinal }, { it.key.first }))
-                .joinToString("\n") { (key, group) ->
-                    val (label, status) = key
-                    val statusText = getString(status.displayNameResId)
-                    if (group.size > 1) "$label — $statusText (${group.size})" else "$label — $statusText"
+                .sortedWith(compareBy({ it.status.ordinal }, { it.displayLabel }, { eventWallMs(it) }))
+                .joinToString("\n") { instrument ->
+                    val statusText = getString(instrument.status.displayNameResId)
+                    val time = eventWallMs(instrument)
+                        .takeIf { it > 0L }
+                        ?.let(NpuActivationLog::formatTime)
+                        ?: "--:--:--"
+                    "${instrument.displayLabel} — $statusText — $time"
                 }
         }
+        // Chamado a cada frame processado: evita re-layout da lista quando nada mudou.
+        if (binding.instrumentsListText.text.toString() != newText) {
+            binding.instrumentsListText.text = newText
+        }
+    }
+
+    /** Instante (relógio de parede) do último evento de status do instrumento. */
+    private fun eventWallMs(instrument: TrackedInstrument): Long = when (instrument.status) {
+        InstrumentStatus.ON_TABLE -> instrument.confirmedAtWallMs
+        InstrumentStatus.REMOVED -> instrument.removedAtWallMs
+        InstrumentStatus.RETURNED -> instrument.returnedAtWallMs
+        InstrumentStatus.NOT_RETURNED -> instrument.notReturnedAtWallMs
+        // Candidatos não entram na lista (ver InstrumentTracker.activeInstruments).
+        InstrumentStatus.CANDIDATE -> instrument.confirmedAtWallMs
     }
 
     private fun toggleMonitoring() {
@@ -181,6 +259,10 @@ class MainActivity : AppCompatActivity() {
         )
         if (enabling) {
             binding.finalCheckButton.isEnabled = true
+        } else {
+            // Sem frames novos processados, as últimas caixas ficariam congeladas
+            // sobre o preview ao vivo — limpa o overlay ao parar.
+            binding.overlayView.update(emptyList(), 1, 1)
         }
     }
 
@@ -222,6 +304,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        NpuActivationLog.removeListener(npuLogListener)
         cameraController?.shutdown()
         modelSessions?.close()
     }

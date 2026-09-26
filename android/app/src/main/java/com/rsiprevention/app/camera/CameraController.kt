@@ -71,13 +71,20 @@ class CameraController(
         try {
             if (monitoringEnabled) {
                 val bitmap = ImageUtils.imageProxyToUprightBitmap(imageProxy)
-                val detections = detector.detect(bitmap)
-                tracker.update(detections, bitmap)
+                try {
+                    val detections = detector.detect(bitmap)
+                    tracker.update(detections, bitmap)
 
-                val instruments = tracker.activeInstruments
-                val width = bitmap.width
-                val height = bitmap.height
-                mainExecutor.execute { onFrameProcessed(instruments, width, height) }
+                    val instruments = tracker.activeInstruments
+                    val width = bitmap.width
+                    val height = bitmap.height
+                    mainExecutor.execute { onFrameProcessed(instruments, width, height) }
+                } finally {
+                    // O bitmap já foi consumido (detector copia os pixels para o
+                    // tensor; tracker extrai os templates de aparência) — recicla
+                    // para não acumular memória nativa frame a frame.
+                    bitmap.recycle()
+                }
             }
         } catch (t: Throwable) {
             Log.e(TAG, "Erro ao processar frame de câmera", t)
