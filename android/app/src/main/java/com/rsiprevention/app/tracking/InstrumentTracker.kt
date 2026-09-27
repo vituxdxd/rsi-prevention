@@ -1,4 +1,4 @@
-﻿package com.rsiprevention.app.tracking
+package com.rsiprevention.app.tracking
 
 import android.os.SystemClock
 import android.util.Log
@@ -344,8 +344,11 @@ class InstrumentTracker(
 
     private fun updateClassVotes(track: TrackedInstrument, detection: Detection) {
         for (i in track.classVotes.indices) track.classVotes[i] *= CLASS_VOTE_DECAY
-        if (detection.classId in track.classVotes.indices) {
-            track.classVotes[detection.classId] += detection.confidence
+        // Vota com a classe bruta do modelo (0..4) para que a votação discrimine
+        // entre os 5 tipos de instrumento, mesmo que a UI exiba classe única.
+        val rawId = detection.rawClassId
+        if (rawId in track.classVotes.indices) {
+            track.classVotes[rawId] += detection.confidence
         }
 
         val bestId = track.classVotes.indices.maxByOrNull { track.classVotes[it] } ?: return
@@ -391,7 +394,7 @@ class InstrumentTracker(
             0.5f
         }
 
-        val classScore = if (detection.classId == track.classId) 1f else 0.55f
+        val classScore = if (detection.rawClassId == track.classId) 1f else 0.55f
 
         return 0.40f * iou + 0.15f * centerScore + 0.15f * sizeScore +
             0.20f * appearanceScore + 0.10f * classScore
@@ -434,8 +437,10 @@ class InstrumentTracker(
         nowMs: Long
     ) = TrackedInstrument(
         id = nextId++,
-        classId = detection.classId,
-        className = detection.className,
+        // O track armazena a classe bruta do modelo (0..4) para votação e
+        // associação; o displayLabel traduz para pt-BR automaticamente.
+        classId = detection.rawClassId,
+        className = InstrumentVocabulary.MODEL_RAW_CLASSES.getOrElse(detection.rawClassId) { detection.className },
         box = detection.box,
         confidence = detection.confidence,
         status = InstrumentStatus.CANDIDATE,
@@ -445,7 +450,7 @@ class InstrumentTracker(
         ageFrames = 1,
         peakConfidence = detection.confidence,
         classVotes = FloatArray(InstrumentVocabulary.MODEL_RAW_CLASSES.size).also {
-            if (detection.classId in it.indices) it[detection.classId] = detection.confidence
+            if (detection.rawClassId in it.indices) it[detection.rawClassId] = detection.confidence
         },
         appearance = appearance
     ).also {

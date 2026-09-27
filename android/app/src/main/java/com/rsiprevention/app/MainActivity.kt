@@ -53,6 +53,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
 
     private var modelSessions: ModelSessions? = null
+    private var detector: YoloWorldDetector? = null
     private var cameraController: CameraController? = null
     private lateinit var tracker: InstrumentTracker
     private lateinit var alertManager: AlertManager
@@ -179,15 +180,14 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.Default) {
             try {
                 val sessions = ModelSessions.create(applicationContext, OrtRuntime.environment) { session ->
-                    ModelSelfTest.passes(
-                        applicationContext,
-                        YoloWorldDetector(
-                            OrtRuntime.environment,
-                            session
-                        )
-                    )
+                    val testDetector = YoloWorldDetector(OrtRuntime.environment, session)
+                    try {
+                        ModelSelfTest.passes(applicationContext, testDetector)
+                    } finally {
+                        testDetector.close()
+                    }
                 }
-                val detector = YoloWorldDetector(OrtRuntime.environment, sessions.detectorSession)
+                val det = YoloWorldDetector(OrtRuntime.environment, sessions.detectorSession)
 
                 withContext(Dispatchers.Main) {
                     pipelineInitInFlight = false
@@ -195,11 +195,13 @@ class MainActivity : AppCompatActivity() {
                         // A tela morreu durante a carga (que pode levar minutos na
                         // 1ª compilação NPU): fecha as sessões em vez de vazá-las
                         // ligando a câmera numa Activity destruída.
+                        det.close()
                         sessions.close()
                         return@withContext
                     }
                     modelSessions = sessions
-                    onPipelineReady(detector, sessions.backend)
+                    detector = det
+                    onPipelineReady(det, sessions.backend)
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "Falha ao inicializar pipeline de detecção", t)
@@ -420,6 +422,7 @@ class MainActivity : AppCompatActivity() {
         stopStreaming()
         NpuActivationLog.removeListener(npuLogListener)
         cameraController?.shutdown()
+        detector?.close()
         modelSessions?.close()
     }
 

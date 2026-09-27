@@ -46,7 +46,12 @@ object Preprocessor {
      */
     private val floatPixels = FloatArray(3 * PLANE_SIZE)
 
-    private val inputBuffer: ByteBuffer =
+    /**
+     * Buffer direto compartilhado com o [YoloWorldDetector]: o tensor de entrada
+     * ONNX é criado uma vez e referencia este buffer. O [preprocess] preenche-o
+     * a cada frame; a NPU consome antes do próximo preenchimento.
+     */
+    internal val inputBuffer: ByteBuffer =
         ByteBuffer.allocateDirect(4 * 3 * PLANE_SIZE).order(ByteOrder.nativeOrder())
     private val floatBuffer: FloatBuffer = inputBuffer.asFloatBuffer()
 
@@ -69,25 +74,7 @@ object Preprocessor {
         val modelBitmap = if (bitmap.width == MODEL_INPUT_SIZE && bitmap.height == MODEL_INPUT_SIZE) {
             bitmap
         } else {
-            val transform = Letterbox.forFrame(bitmap.width, bitmap.height)
-            val contentWidth = (bitmap.width * transform.scale).roundToInt().coerceIn(1, MODEL_INPUT_SIZE)
-            val contentHeight = (bitmap.height * transform.scale).roundToInt().coerceIn(1, MODEL_INPUT_SIZE)
-            val left = (MODEL_INPUT_SIZE - contentWidth) / 2
-            val top = (MODEL_INPUT_SIZE - contentHeight) / 2
-            scaleDestination.set(left, top, left + contentWidth, top + contentHeight)
-
-            val scratch = scaleScratch ?: Bitmap
-                .createBitmap(MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, Bitmap.Config.ARGB_8888)
-                .also { scaleScratch = it }
-            scaleCanvas.setBitmap(scratch)
-            try {
-                // O padding é redesenhado a cada frame (o bitmap é reutilizado).
-                scaleCanvas.drawColor(Letterbox.PAD_COLOR)
-                scaleCanvas.drawBitmap(bitmap, null, scaleDestination, scalePaint)
-            } finally {
-                scaleCanvas.setBitmap(null)
-            }
-            scratch
+            letterboxScale(bitmap)
         }
         val scaleNs = System.nanoTime() - scaleStartNs
 
@@ -110,6 +97,35 @@ object Preprocessor {
         val fillNs = System.nanoTime() - fillStartNs
 
         return PreprocessedFrame(inputBuffer, ModelFrame(pixels, MODEL_INPUT_SIZE), scaleNs, pixelsNs, fillNs)
+    }
+
+    /**
+     * Letterbox: redimensiona preservando aspecto, centraliza com padding cinza 114.
+     * Frame 720×960 → conteúdo 480×640 centralizado em 640×640 (25% padding).
+     */
+    private fun letterboxScale(bitmap: Bitmap): Bitmap {
+        val transform = Letterbox.forFrame(bitmap.width, bitmap.height)
+        val contentWidth = (bitmap.width * transform.scale).roundToInt().coerceIn(1, MODEL_INPUT_SIZE)
+        val contentHeight = (bitmap.height * transform.scale).roundToInt().coerceIn(1, MODEL_INPUT_SIZE)
+        val left = (MODEL_INPUT_SIZE - contentWidth) / 2
+        val top = (MODEL_INPUT_SIZE - contentHeight) / 2
+        scaleDestination.set(left, top, left + contentWidth, top + contentHeight)
+
+        val scratch = ensureScratch()
+        scaleCanvas.setBitmap(scratch)
+        try {
+            scaleCanvas.drawColor(Letterbox.PAD_COLOR)
+            scaleCanvas.drawBitmap(bitmap, null, scaleDestination, scalePaint)
+        } finally {
+            scaleCanvas.setBitmap(null)
+        }
+        return scratch
+    }
+
+    private fun ensureScratch(): Bitmap {
+        return scaleScratch ?: Bitmap
+            .createBitmap(MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, Bitmap.Config.ARGB_8888)
+            .also { scaleScratch = it }
     }
 }
 

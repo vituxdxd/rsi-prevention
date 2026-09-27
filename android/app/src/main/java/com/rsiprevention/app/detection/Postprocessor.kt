@@ -2,6 +2,7 @@ package com.rsiprevention.app.detection
 
 import ai.onnxruntime.OnnxTensor
 import com.rsiprevention.app.vocabulary.InstrumentVocabulary
+import java.nio.FloatBuffer
 
 /**
  * Decodifica as duas saídas do YOLO26s (`detector_int8.onnx`) em uma lista de
@@ -19,7 +20,7 @@ import com.rsiprevention.app.vocabulary.InstrumentVocabulary
  * corpos estranhos a subclasse do instrumento não importa (e o modelo confunde
  * muito entre classes parecidas), então a [Detection] emitida é sempre a classe
  * única [InstrumentVocabulary.SINGLE_CLASS_NAME], com o **maior score** entre
- * as 5 pontuações brutas.
+ * as 5 pontuações brutas (a classe vencedora vai em [Detection.rawClassId]).
  *
  * O NMS, porém, usa a **classe bruta vencedora de cada âncora** (antes do
  * colapso): a primeira passada remove duplicatas do mesmo instrumento bruto
@@ -50,33 +51,37 @@ object Postprocessor {
     /**
      * Decodifica `boxes` [1, 4, 8400] + `scores` [1, 5, 8400], filtra por
      * confiança e aplica NMS.
+     *
+     * Usa `getFloatBuffer()`: o ORT Java copia o tensor para um `FloatBuffer`
+     * heap em bloco (uma cópia de ~300 KB/frame no total), evitando os arrays
+     * Java multidimensionais montados por `getValue()` (milhares de objetos e
+     * chamadas JNI por frame). Não é zero-copy — `getBufferRef()` seria o
+     * caminho para isso, se algum dia o pós-processamento voltar a ser gargalo
+     * (medido em 0,5–0,8 ms/frame no POCO F7).
      */
-    fun process(boxesTensor: OnnxTensor, scoresTensor: OnnxTensor): DetectionResult {
-        // boxes[coord][prediction] e scores[class][prediction] — já dequantizados pelo ORT
-        return process(
-            (boxesTensor.value as Array<Array<FloatArray>>)[0],
-            (scoresTensor.value as Array<Array<FloatArray>>)[0]
-        )
-    }
+    fun process(boxesTensor: OnnxTensor, scoresTensor: OnnxTensor): DetectionResult =
+        processBuffers(boxesTensor.floatBuffer, scoresTensor.floatBuffer)
 
     /**
-     * Versão pura de [process] (sem ORT) — testável em JVM.
+     * Núcleo puro (sem ORT) — testável em JVM. É o **mesmo caminho usado em
+     * produção**, para que os testes cubram o que roda no aparelho.
      *
-     * @param boxes `[4][8400]` cx, cy, w, h em pixels (0..640)
-     * @param scores `[5][8400]` probabilidade de cada classe bruta por âncora
+     * @param boxes layout `[coord][prediction]`, stride [NUM_PREDICTIONS]
+     *   (cx, cy, w, h em pixels, 0..640)
+     * @param scores layout `[class][prediction]`, stride [NUM_PREDICTIONS]
      */
-    fun process(boxes: Array<FloatArray>, scores: Array<FloatArray>): DetectionResult {
-        val candidates = ArrayList<RawCandidate>()
+    fun processBuffers(boxes: FloatBuffer, scores: FloatBuffer): DetectionResult {
+        val candidates = ArrayList<RawCandidate>(128)
         val imgSize = Preprocessor.MODEL_INPUT_SIZE.toFloat()
         var frameMaxConfidence = 0f
 
         for (j in 0 until NUM_PREDICTIONS) {
             // Maior score entre as 5 classes brutas — e a classe vencedora, que o
             // NMS usa para não fundir instrumentos diferentes que se sobrepõem.
-            var bestScore = scores[0][j]
+            var bestScore = scores.get(j)
             var bestClass = 0
             for (c in 1 until RAW_CLASSES) {
-                val score = scores[c][j]
+                val score = scores.get(c * NUM_PREDICTIONS + j)
                 if (score > bestScore) {
                     bestScore = score
                     bestClass = c
@@ -87,10 +92,10 @@ object Postprocessor {
             if (bestScore < CONFIDENCE_THRESHOLD) continue
 
             // cx, cy, w, h → left, top, right, bottom
-            val cx = boxes[0][j]
-            val cy = boxes[1][j]
-            val w  = boxes[2][j]
-            val h  = boxes[3][j]
+            val cx = boxes.get(j)
+            val cy = boxes.get(NUM_PREDICTIONS + j)
+            val w  = boxes.get(2 * NUM_PREDICTIONS + j)
+            val h  = boxes.get(3 * NUM_PREDICTIONS + j)
 
             val box = Box(
                 (cx - w / 2f).coerceIn(0f, imgSize),
@@ -108,7 +113,8 @@ object Postprocessor {
                 classId = InstrumentVocabulary.SINGLE_CLASS_ID,
                 className = InstrumentVocabulary.SINGLE_CLASS_NAME,
                 confidence = candidate.confidence,
-                box = candidate.box
+                box = candidate.box,
+                rawClassId = candidate.rawClass
             )
         }
         return DetectionResult(detections, frameMaxConfidence)

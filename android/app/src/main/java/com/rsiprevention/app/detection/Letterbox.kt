@@ -32,7 +32,7 @@ object Letterbox {
         fun toFrameY(modelY: Float): Float = (modelY - padY) / scale
     }
 
-    /** Transformação para um frame de [width]×[height] pixels. */
+    /** Transformação letterbox para um frame de [width]×[height] pixels. */
     fun forFrame(width: Int, height: Int): Transform {
         require(width > 0 && height > 0) { "frame inválido: ${width}x$height" }
         val scale = MODEL_SIZE.toFloat() / max(width, height)

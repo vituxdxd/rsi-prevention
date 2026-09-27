@@ -19,6 +19,23 @@ class YoloWorldDetector(
     private val detectorSession: OrtSession
 ) {
     /**
+     * Tensor de entrada reutilizado entre frames: envolve o mesmo [ByteBuffer]
+     * direto que o [Preprocessor] preenche (sem cópia). Eliminamos a criação e
+     * destruição de um `OrtValue` nativo a cada frame via JNI (~30 µs + GC).
+     *
+     * O contrato é seguro porque:
+     * - O pipeline roda em single-thread (executor `rsi-inference`).
+     * - O [Preprocessor] preenche o buffer e retorna; o tensor é consumido
+     *   pela NPU antes do próximo frame ser preprocessado.
+     */
+    private val reusableTensor: OnnxTensor = OnnxTensor.createTensor(
+        env, Preprocessor.inputBuffer, IMAGE_SHAPE, OnnxJavaType.FLOAT
+    )
+
+    /** Mapa de entrada reutilizado (evita alocar HashMap + Entry por frame). */
+    private val inputMap: Map<String, OnnxTensor> = mapOf("images" to reusableTensor)
+
+    /**
      * Bloqueia até a NPU retornar — nunca chamar na thread principal.
      *
      * Devolve as detecções, a maior confiança crua do frame (verificação de
@@ -29,33 +46,37 @@ class YoloWorldDetector(
     fun detectFrame(uprightBitmap: Bitmap): DetectionFrame {
         val preprocessStartNs = System.nanoTime()
         val preprocessed = Preprocessor.preprocess(uprightBitmap)
+        val preprocessNs = System.nanoTime() - preprocessStartNs
 
-        OnnxTensor.createTensor(env, preprocessed.tensor, IMAGE_SHAPE, OnnxJavaType.FLOAT).use { imageTensor ->
-            val preprocessNs = System.nanoTime() - preprocessStartNs
+        // O Preprocessor já preencheu o mesmo ByteBuffer que o reusableTensor
+        // referencia — basta rodar a sessão sem criar um tensor novo.
+        val inferenceStartNs = System.nanoTime()
+        detectorSession.run(inputMap).use { result ->
+            val inferenceNs = System.nanoTime() - inferenceStartNs
+            val boxesTensor = result.tensor(BOXES_OUTPUT)
+            val scoresTensor = result.tensor(SCORES_OUTPUT)
 
-            val inferenceStartNs = System.nanoTime()
-            detectorSession.run(mapOf("images" to imageTensor)).use { result ->
-                val inferenceNs = System.nanoTime() - inferenceStartNs
-                val boxesTensor = result.tensor(BOXES_OUTPUT)
-                val scoresTensor = result.tensor(SCORES_OUTPUT)
+            val postprocessStartNs = System.nanoTime()
+            val processed = Postprocessor.process(boxesTensor, scoresTensor)
+            val postprocessNs = System.nanoTime() - postprocessStartNs
 
-                val postprocessStartNs = System.nanoTime()
-                val processed = Postprocessor.process(boxesTensor, scoresTensor)
-                val postprocessNs = System.nanoTime() - postprocessStartNs
-
-                return DetectionFrame(
-                    detections = processed.detections,
-                    maxConfidence = processed.maxConfidence,
-                    model = preprocessed.model,
-                    preprocessNs = preprocessNs,
-                    preprocessScaleNs = preprocessed.scaleNs,
-                    preprocessPixelsNs = preprocessed.pixelsNs,
-                    preprocessFillNs = preprocessed.fillNs,
-                    inferenceNs = inferenceNs,
-                    postprocessNs = postprocessNs
-                )
-            }
+            return DetectionFrame(
+                detections = processed.detections,
+                maxConfidence = processed.maxConfidence,
+                model = preprocessed.model,
+                preprocessNs = preprocessNs,
+                preprocessScaleNs = preprocessed.scaleNs,
+                preprocessPixelsNs = preprocessed.pixelsNs,
+                preprocessFillNs = preprocessed.fillNs,
+                inferenceNs = inferenceNs,
+                postprocessNs = postprocessNs
+            )
         }
+    }
+
+    /** Libera o tensor reutilizado (chamar no shutdown, após `awaitTermination`). */
+    fun close() {
+        reusableTensor.close()
     }
 
     private fun OrtSession.Result.tensor(name: String): OnnxTensor =
