@@ -15,7 +15,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
-import com.rsiprevention.app.detection.YoloWorldDetector
+import com.rsiprevention.app.detection.InstrumentDetector
 import com.rsiprevention.app.perf.PipelineStats
 import com.rsiprevention.app.stream.FrameStreamer
 import com.rsiprevention.app.stream.StreamOverlay
@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit
  * Liga o `ImageAnalysis` do CameraX (`STRATEGY_KEEP_ONLY_LATEST`, doc de
  * deploy seção 6) a um executor dedicado de inferência (nunca
  * `Dispatchers.Main`/main thread — seção 9.4) que roda o pipeline completo:
- * frame -> [YoloWorldDetector] -> [InstrumentTracker].
+ * frame -> [InstrumentDetector] -> [InstrumentTracker].
  *
  * A **transmissão** ([FrameStreamer]/`StreamServer`) é independente do
  * monitoramento: [streamingEnabled] liga o envio de frames ao servidor HTTP,
@@ -48,7 +48,7 @@ class CameraController(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
     private val previewView: PreviewView,
-    private val detector: YoloWorldDetector,
+    private val detector: InstrumentDetector,
     private val tracker: InstrumentTracker,
     private val onFrameProcessed: (instruments: List<TrackedInstrument>, frameWidth: Int, frameHeight: Int) -> Unit
 ) {

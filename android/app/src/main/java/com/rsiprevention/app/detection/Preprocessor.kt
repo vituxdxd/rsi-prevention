@@ -47,7 +47,7 @@ object Preprocessor {
     private val floatPixels = FloatArray(3 * PLANE_SIZE)
 
     /**
-     * Buffer direto compartilhado com o [YoloWorldDetector]: o tensor de entrada
+     * Buffer direto compartilhado com o [InstrumentDetector]: o tensor de entrada
      * ONNX é criado uma vez e referencia este buffer. O [preprocess] preenche-o
      * a cada frame; a NPU consome antes do próximo preenchimento.
      */

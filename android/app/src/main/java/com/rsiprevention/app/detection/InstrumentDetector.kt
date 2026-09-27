@@ -13,8 +13,14 @@ import android.graphics.Bitmap
  * inferência (nunca `Dispatchers.Main`, ver doc de deploy seção 9.4) e nunca
  * concorrentemente — o mesmo padrão do `ImageAnalysis` do CameraX com
  * `STRATEGY_KEEP_ONLY_LATEST` (no máximo um frame em voo por vez).
+ *
+ * **Nota de nome**: na fase inicial o projeto usava YOLO-World (vocabulário
+ * aberto, prompts de texto + encoder CLIP) e esta classe se chamava
+ * `YoloWorldDetector`. Depois da migração para o YOLO26s de classe única
+ * (`detector_int8.onnx`, ver README) o caminho de texto foi removido e o nome
+ * ficou obsoleto — a classe é só o orquestrador do detector.
  */
-class YoloWorldDetector(
+class InstrumentDetector(
     private val env: OrtEnvironment,
     private val detectorSession: OrtSession
 ) {

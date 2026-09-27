@@ -18,7 +18,7 @@ import com.rsiprevention.app.alert.AlertManager
 import com.rsiprevention.app.camera.CameraController
 import com.rsiprevention.app.databinding.ActivityMainBinding
 import com.rsiprevention.app.detection.ModelSelfTest
-import com.rsiprevention.app.detection.YoloWorldDetector
+import com.rsiprevention.app.detection.InstrumentDetector
 import com.rsiprevention.app.ort.ModelSessions
 import com.rsiprevention.app.ort.NpuActivationLog
 import com.rsiprevention.app.ort.NpuLog
@@ -53,7 +53,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
 
     private var modelSessions: ModelSessions? = null
-    private var detector: YoloWorldDetector? = null
+    private var detector: InstrumentDetector? = null
     private var cameraController: CameraController? = null
     private lateinit var tracker: InstrumentTracker
     private lateinit var alertManager: AlertManager
@@ -180,14 +180,14 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.Default) {
             try {
                 val sessions = ModelSessions.create(applicationContext, OrtRuntime.environment) { session ->
-                    val testDetector = YoloWorldDetector(OrtRuntime.environment, session)
+                    val testDetector = InstrumentDetector(OrtRuntime.environment, session)
                     try {
                         ModelSelfTest.passes(applicationContext, testDetector)
                     } finally {
                         testDetector.close()
                     }
                 }
-                val det = YoloWorldDetector(OrtRuntime.environment, sessions.detectorSession)
+                val det = InstrumentDetector(OrtRuntime.environment, sessions.detectorSession)
 
                 withContext(Dispatchers.Main) {
                     pipelineInitInFlight = false
@@ -214,7 +214,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun onPipelineReady(detector: YoloWorldDetector, backend: QnnSessionFactory.Backend) {
+    private fun onPipelineReady(detector: InstrumentDetector, backend: QnnSessionFactory.Backend) {
         binding.npuStatusText.text = getString(
             when (backend) {
                 QnnSessionFactory.Backend.HTP -> R.string.npu_status_active

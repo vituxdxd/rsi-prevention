@@ -41,7 +41,7 @@ object ModelSelfTest {
     private const val MIN_CONFIDENCE = 0.04f
 
     /** @return `true` se o detector aprovou a imagem de referência. */
-    fun passes(context: Context, detector: YoloWorldDetector): Boolean {
+    fun passes(context: Context, detector: InstrumentDetector): Boolean {
         val bitmap = runCatching {
             context.assets.open(ASSET_NAME).use { BitmapFactory.decodeStream(it) }
         }.getOrNull()

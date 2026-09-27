@@ -110,7 +110,7 @@ android/app/src/main/java/com/rsiprevention/app/
 ├── camera/                         # CameraX + conversão de frame (FrameConverter, bitmap reutilizado)
 ├── detection/
 │   ├── Preprocessor.kt             # Bitmap → tensor float32 NCHW [0,1] + pixels do modelo (buffers reutilizados)
-│   ├── YoloWorldDetector.kt        # sessão ONNX → boxes/scores + tempo por etapa
+│   ├── InstrumentDetector.kt        # sessão ONNX → boxes/scores + tempo por etapa
 │   ├── Postprocessor.kt            # filtro, classe única, NMS (uma passada)
 │   ├── ModelSelfTest.kt            # sanidade da NPU (imagem de referência)
 │   ├── Box.kt / BoxMath.kt / Detection.kt
