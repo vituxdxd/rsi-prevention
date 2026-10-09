@@ -8,6 +8,7 @@ export/.venv/
 export/__pycache__/
 export/**/__pycache__/
 export/build/
+__pycache__/
 *.pyc
 
 # --- Modelos de trabalho (grandes; baixáveis do Hugging Face ou regeneráveis
@@ -44,3 +45,16 @@ android/build_log*.txt
 # --- OS ---
 Thumbs.db
 .DS_Store
+
+# --- Materiais do paper/submissão (documentos locais, não fazem parte do app) ---
+/referencias/
+/imagens/
+/edital_texto_completo.txt
+/EDITAL_SUBMISSAO_DE_TRABALHOS.pdf
+/modelo-submissao-template-2.pdf
+/parecer gpt.md
+*.docx
+
+# --- Dados de trabalho de calibração (frames capturados; regeneráveis pelo app) ---
+/frames/
+/frames_baixo_contraste/

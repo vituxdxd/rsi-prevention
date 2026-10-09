@@ -139,8 +139,6 @@ _build_calibration.py               # monta o conjunto de calibração (.h5) na 
 _quantize_qnn.py                    # quantização A16W8 (get_qnn_qdq_config)
 _benchmark_preprocess.py            # compara stretch × letterbox (float e asset quantizado)
 _fix_output_split.py                # separa boxes/scores; valida o asset (--check, --preprocess)
-_quantize_local.py                  # experimento INT8 MinMax (documentação)
-_export_joonhaim_qnn.py             # tentativa QAI Hub (histórico, não usado)
 _test_*.jpg                         # imagens para validação do detector
 ```
 
