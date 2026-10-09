@@ -17,7 +17,7 @@ import kotlin.math.max
 
 /**
  * View de overlay desenhada sobre o [androidx.camera.view.PreviewView]: caixas +
- * rótulos pt-BR dos instrumentos atualmente detectados (ver instrucao_ui_ptbr_yolo_world.md).
+ * rótulos pt-BR dos instrumentos atualmente detectados.
  *
  * Contrato de coordenadas (importante para quem chamar [update]):
  * - [TrackedInstrument.box] está no espaço de entrada do modelo, um quadrado

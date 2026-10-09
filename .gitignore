@@ -52,9 +52,4 @@ Thumbs.db
 /edital_texto_completo.txt
 /EDITAL_SUBMISSAO_DE_TRABALHOS.pdf
 /modelo-submissao-template-2.pdf
-/parecer gpt.md
 *.docx
-
-# --- Dados de trabalho de calibração (frames capturados; regeneráveis pelo app) ---
-/frames/
-/frames_baixo_contraste/

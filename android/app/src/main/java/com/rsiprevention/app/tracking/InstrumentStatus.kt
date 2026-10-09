@@ -2,7 +2,7 @@ package com.rsiprevention.app.tracking
 
 /**
  * Estado de rastreamento de um instrumento cirúrgico entre frames.
- * Exibição exclusivamente em pt-BR (ver instrucao_ui_ptbr_yolo_world.md).
+ * Exibição exclusivamente em pt-BR.
  */
 enum class InstrumentStatus(val displayNameResId: Int) {
     /** Detectado mas aguardando confirmação temporal (precisa de K de N frames). */
