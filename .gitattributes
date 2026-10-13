@@ -1,0 +1,18 @@
+# Normaliza finais de linha no repositório (LF), independente do SO usado.
+# Sem isso, um checkout no Windows (CRLF) e um no Linux (LF) deixam o
+# `git status` inteiro "modificado" sem nenhuma mudança real de conteúdo.
+* text=auto
+
+# Scripts de Windows devem manter CRLF ao serem materializados.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binários que não devem sofrer nenhuma conversão.
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.onnx binary
+*.data binary
+*.jar binary
+*.apk binary
+*.pdf binary

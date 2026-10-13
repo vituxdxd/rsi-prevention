@@ -1,0 +1,66 @@
+<resources>
+    <string name="app_name">Prevenção de RSI</string>
+
+    <!-- Status geral / NPU -->
+    <string name="npu_status_active">NPU Hexagon ativa</string>
+    <string name="npu_status_gpu">GPU Adreno ativa (NPU recusou o modelo)</string>
+    <string name="npu_status_nnapi">NNAPI ativa (aceleração parcial)</string>
+    <string name="npu_status_xnnpack">XNNPACK ativa (CPU otimizado)</string>
+    <string name="npu_status_cpu">CPU ativa — sem acelerador, detecção mais lenta</string>
+    <string name="npu_status_initializing">Inicializando NPU… (1ª execução pode levar alguns minutos)</string>
+    <string name="npu_status_error">Falha ao iniciar NPU</string>
+    <string name="npu_status_error_retry">Falha ao iniciar NPU — toque aqui para tentar novamente</string>
+
+    <!-- Log da ativação da NPU (painel discreto na barra superior) -->
+    <string name="npu_log_toggle_show">Log da NPU Hexagon ▸</string>
+    <string name="npu_log_toggle_hide">Log da NPU Hexagon ▾</string>
+    <string name="npu_log_empty">(sem eventos ainda)</string>
+
+    <!-- Monitoramento -->
+    <string name="monitoring_idle">Monitoramento parado</string>
+    <string name="monitoring_active">Monitoramento ativo</string>
+    <string name="instrument_detected">Instrumento detectado</string>
+    <string name="instrument_removed_log">Instrumento retirado da mesa</string>
+    <string name="instrument_returned_log">Instrumento devolvido à mesa</string>
+    <string name="check_complete">Checagem concluída</string>
+    <string name="alert_not_returned">ATENÇÃO: instrumento não devolvido à mesa</string>
+
+    <!-- Transmissão Wi-Fi -->
+    <string name="stream_switch">Transmitir (Wi-Fi)</string>
+    <string name="stream_status_off">Desligado</string>
+    <string name="stream_status_on">Ativo: %1$s — toque para o QR</string>
+    <string name="stream_qr_title">Abrir no navegador (Wi-Fi do aparelho)</string>
+    <string name="stream_unavailable">Inicialize a NPU antes de transmitir</string>
+    <string name="stream_error">Falha ao iniciar a transmissão</string>
+
+    <!-- Botões -->
+    <string name="button_start_monitoring">Iniciar monitoramento</string>
+    <string name="button_stop_monitoring">Parar monitoramento</string>
+    <string name="button_final_check">Checagem final</string>
+    <string name="button_ok">OK</string>
+    <string name="button_cancel">Cancelar</string>
+    <string name="button_reset_session">Reiniciar sessão</string>
+
+    <!-- Permissão de câmera -->
+    <string name="camera_permission_rationale">A câmera é necessária para monitorar a mesa cirúrgica e detectar os instrumentos.</string>
+    <string name="camera_permission_denied">Sem acesso à câmera. O monitoramento não pode continuar.</string>
+    <string name="camera_permission_grant">Conceder permissão</string>
+
+    <!-- Lista de instrumentos -->
+    <string name="instruments_list_title">Instrumentos monitorados</string>
+    <string name="instruments_list_empty">Nenhum instrumento detectado ainda</string>
+
+    <!-- Estados de tracking (ver InstrumentStatus.kt) -->
+    <string name="status_on_table">Na mesa</string>
+    <string name="status_removed">Retirado da mesa</string>
+    <string name="status_returned">Devolvido à mesa</string>
+    <string name="status_not_returned">Não devolvido</string>
+
+    <!-- Diálogo de checagem final -->
+    <string name="check_dialog_title">Checagem final — Prevenção de RSI</string>
+    <string name="check_dialog_all_ok">Todos os instrumentos retirados foram devolvidos à mesa.</string>
+    <string name="check_dialog_missing_header">Instrumentos NÃO devolvidos à mesa:</string>
+
+    <!-- Rodapé de confirmação técnica (demo) -->
+    <string name="backend_confirmation_format">Backend de inferência ativo: %1$s</string>
+</resources>

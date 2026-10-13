@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/black">
+
+    <androidx.camera.view.PreviewView
+        android:id="@+id/previewView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:scaleType="fillCenter" />
+
+    <com.rsiprevention.app.ui.OverlayView
+        android:id="@+id/overlayView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Barra superior: status da NPU + status do monitoramento -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:orientation="vertical"
+        android:background="@color/scrim_dark"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="10dp">
+
+        <TextView
+            android:id="@+id/npuStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/npu_status_initializing"
+            android:textColor="@color/teal_light"
+            android:textStyle="bold"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/monitoringStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/monitoring_idle"
+            android:textColor="@color/white"
+            android:textSize="16sp" />
+
+        <!-- Log discreto da ativação da NPU: oculto por padrão, toque para alternar. -->
+        <TextView
+            android:id="@+id/npuLogToggle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:paddingVertical="2dp"
+            android:text="@string/npu_log_toggle_show"
+            android:textColor="@color/teal_light"
+            android:textSize="12sp" />
+
+        <ScrollView
+            android:id="@+id/npuLogScroll"
+            android:layout_width="match_parent"
+            android:layout_height="120dp"
+            android:layout_marginTop="4dp"
+            android:background="@color/scrim_light"
+            android:padding="6dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/npuLogText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="@color/white"
+                android:textSize="10sp" />
+        </ScrollView>
+    </LinearLayout>
+
+    <!-- Barra inferior: lista de instrumentos + ações -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:background="@color/scrim_dark"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="20dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/instruments_list_title"
+            android:textColor="@color/teal_light"
+            android:textStyle="bold"
+            android:textSize="13sp" />
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="110dp"
+            android:layout_marginTop="4dp">
+
+            <TextView
+                android:id="@+id/instrumentsListText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/instruments_list_empty"
+                android:textColor="@color/white"
+                android:textSize="14sp"
+                android:fontFamily="monospace" />
+        </ScrollView>
+
+        <!-- Transmissão Wi-Fi para o navegador (independente do monitoramento) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <!-- CheckBox nativo de propósito: MaterialSwitch exige tema Material 3
+                 e quebra (NPE no StaticLayout do SwitchCompat) no tema M2 deste app. -->
+            <CheckBox
+                android:id="@+id/streamSwitch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:buttonTint="@color/teal_light"
+                android:enabled="false"
+                android:text="@string/stream_switch"
+                android:textColor="@color/white"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/streamStatusText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="end"
+                android:paddingHorizontal="8dp"
+                android:text="@string/stream_status_off"
+                android:textColor="@color/teal_light"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:baselineAligned="false"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <!-- Altura fixa, insets zerados e conteúdo centralizado: garante os
+                 dois botões exatamente na mesma linha/altura (o alinhamento por
+                 linha de base + insets padrão do MaterialButton desalinhava). -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/startStopButton"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:gravity="center"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:text="@string/button_start_monitoring"
+                android:textSize="13sp"
+                app:backgroundTint="@color/teal_primary" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/finalCheckButton"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:enabled="false"
+                android:gravity="center"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:text="@string/button_final_check"
+                android:textSize="13sp"
+                app:backgroundTint="@color/warning_amber" />
+        </LinearLayout>
+    </LinearLayout>
+
+</FrameLayout>
