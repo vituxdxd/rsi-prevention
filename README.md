@@ -1,10 +1,39 @@
-# Monitoramento de instrumentos cirúrgicos por visão computacional embarcada
+<p align="center">
+  <img src="docs/icone.jpg" width="140" alt="RSI Prevention">
+</p>
+
+<h1 align="center">Monitoramento de instrumentos cirúrgicos por visão computacional embarcada</h1>
+
+<p align="center">
+  Aplicativo Android (Kotlin) que detecta e rastreia instrumentos sobre a mesa operatória,
+  registra retiradas e devoluções e faz a checagem final — com inferência exclusiva na NPU do aparelho.
+</p>
+
+<p align="center">
+  <b>Português</b> · <a href="README.en.md">English</a>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="Licença: AGPL-3.0" src="https://img.shields.io/badge/licen%C3%A7a-AGPL--3.0-4DB6AC"></a>
+  <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-1.9.24-00695C?logo=kotlin&logoColor=white">
+  <img alt="Android" src="https://img.shields.io/badge/Android-minSdk%2031-00695C?logo=android&logoColor=white">
+  <img alt="NPU" src="https://img.shields.io/badge/NPU-Hexagon%20V73-00695C">
+  <img alt="Modelo" src="https://img.shields.io/badge/modelo-YOLO26s%20A16W8-4DB6AC">
+  <img alt="Testes" src="https://img.shields.io/badge/testes-54%20JVM-2E7D32">
+  <img alt="Desempenho" src="https://img.shields.io/badge/27%2C0%20quadros%2Fs-FFA000">
+</p>
+
+<p align="center">
+  <img src="docs/banner.jpg" width="100%" alt="Celular exibindo caixas de detecção sobre instrumentos cirúrgicos em uma bandeja">
+</p>
 
 Aplicativo Android (Kotlin) para prevenir a retenção inadvertida de instrumentos cirúrgicos (RSI, do inglês *Retained Surgical Items*). Roda visão computacional inteiramente no aparelho: detecta e rastreia instrumentos sobre a mesa operatória, registra retiradas e devoluções e faz a checagem final dos que não voltaram.
 
 A inferência usa a NPU Qualcomm Hexagon (QNN HTP), sem fallback para CPU: se a NPU não aceitar o modelo, o aplicativo falha de forma explícita, em vez de rodar na CPU sem avisar. Nenhuma imagem é enviada para servidores externos: o processamento roda no aparelho e a transmissão Wi-Fi, quando ligada, fica restrita à rede local.
 
 Números medidos em bancada com um POCO F7, em 5,4 minutos de operação contínua: 27,0 quadros por segundo ponta a ponta e 34,7 ms de latência média por quadro (14,4 ms na NPU).
+
+**[Como funciona](#como-funciona) · [Alvo](#alvo) · [Modelo e quantização](#modelo-e-quantização) · [Transmissão Wi-Fi](#transmissão-wi-fi) · [Estrutura](#estrutura-do-repositório) · [Build e testes](#build-e-testes) · [Testes automatizados](#testes-automatizados) · [Limitações](#limitações) · [Licença](#licença)**
 
 ## Como funciona
 
@@ -122,6 +151,8 @@ _quantize_qnn.py                    # quantização A16W8
 _benchmark_preprocess.py            # compara stretch e letterbox
 _fix_output_split.py                # separa boxes/scores e valida o asset
 _test_*.jpg                         # imagens para validação do detector
+docs/                               # imagens do README (ícone e banner)
+README.en.md                        # versão em inglês
 LICENSE                             # AGPL-3.0
 ```
 

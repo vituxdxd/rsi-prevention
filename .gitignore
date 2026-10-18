@@ -56,11 +56,20 @@ Thumbs.db
 /rascunhos/
 *.md
 !README.md
+!README.en.md
 !LICENSE
 /notas-locais/
 
 # --- Ferramentas locais (grafo de conhecimento dos agentes) ---
 /graphify-out/
+
+# --- Ferramentas locais de agentes e materiais de apresentação ---
+/.agents/
+/.claude/
+/.codex/
+/.frontend-slides/
+/skills-lock.json
+/para fazer o slide/
 
 # --- Arquivos temporários de editores (LibreOffice/Word) ---
 .~lock.*#
