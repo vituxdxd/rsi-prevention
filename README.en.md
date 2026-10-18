@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/icone.jpg" width="140" alt="RSI Prevention">
+  <img src="docs/icone.png" width="140" alt="RSI Prevention">
 </p>
 
 <h1 align="center">Surgical instrument monitoring with on-device computer vision</h1>
